@@ -83,7 +83,7 @@ from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_che
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, export_policy_as_jit, export_policy_as_onnx
 
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.utils import get_checkpoint_path
+from isaaclab_tasks.utils import get_checkpoint_path, load_cfg_from_registry
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import openarm.tasks  # noqa: F401
@@ -97,6 +97,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # grab task name for checkpoint path
     task_name = args_cli.task.split(":")[-1]
     train_task_name = task_name.replace("-Play", "")
+    # use the task's play env config if it registers one (instead of a separate "-Play" task)
+    if "play_env_cfg_entry_point" in gym.spec(task_name).kwargs:
+        env_cfg = load_cfg_from_registry(task_name, "play_env_cfg_entry_point")
 
     # override configurations with non-hydra CLI arguments
     agent_cfg: RslRlBaseRunnerCfg = cli_args.update_rsl_rl_cfg(agent_cfg, args_cli)
