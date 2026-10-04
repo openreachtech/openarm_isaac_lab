@@ -127,12 +127,20 @@ Replace `<TASK_NAME>` and `<POLICY_NAME>` with one of the following available ta
 ### Training Model
 
 ```bash
+# rsl_rl
+python ./scripts/rsl_rl/train.py --task <TASK_NAME> --headless
+
+# rl_games / skrl
 python ./scripts/reinforcement_learning/<POLICY_NAME>/train.py --task <TASK_NAME> --headless
 ```
 
 ### Replay Trained Model
 
 ```bash
+# rsl_rl
+python ./scripts/rsl_rl/play.py --task <TASK_NAME> --num_envs 64
+
+# rl_games / skrl
 python ./scripts/reinforcement_learning/<POLICY_NAME>/play.py --task <TASK_NAME> --num_envs 64
 ```
 

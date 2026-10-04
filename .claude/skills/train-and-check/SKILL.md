@@ -5,7 +5,7 @@ description: Run RSL-RL training for an OpenArm task and print aggregated Tensor
 
 # Train and Check Results
 
-Runs `scripts/reinforcement_learning/rsl_rl/train_and_aggregate.py` and prints the aggregated metric summary.
+Runs `scripts/rsl_rl/train_and_aggregate.py` and prints the aggregated metric summary.
 Console output from training is not printed; it is saved to `<run_dir>/train.log`. Only the final summary is printed.
 
 ## Arguments
@@ -35,7 +35,7 @@ Logs and checkpoints go to `logs/rsl_rl/<task_name>/<timestamp>/`, where `<task_
 4. Run from the repository root with the Isaac Lab venv's Python, in the background (training takes a long time):
 
 ```bash
-/home/tak/isaacsim/env_isaaclab/bin/python scripts/reinforcement_learning/rsl_rl/train_and_aggregate.py --task <TASK> [--max_iterations <N>]
+/home/tak/isaacsim/env_isaaclab/bin/python scripts/rsl_rl/train_and_aggregate.py --task <TASK> [--max_iterations <N>]
 ```
 
 5. Print the command output to the user as-is.
@@ -46,7 +46,7 @@ If `--task` is missing, ask the user before running.
 ## Example
 
 ```bash
-/home/tak/isaacsim/env_isaaclab/bin/python scripts/reinforcement_learning/rsl_rl/train_and_aggregate.py \
+/home/tak/isaacsim/env_isaaclab/bin/python scripts/rsl_rl/train_and_aggregate.py \
   --task Isaac-Lift-Cube-OpenArm-v0 \
   --max_iterations 1500
 ```
