@@ -97,4 +97,8 @@ def update_rsl_rl_cfg(agent_cfg: RslRlBaseRunnerCfg, args_cli: argparse.Namespac
         agent_cfg.wandb_project = args_cli.log_project_name
         agent_cfg.neptune_project = args_cli.log_project_name
 
+    if agent_cfg.experiment_name == "":
+        # logs/rsl_rl/{task name}; Play tasks share the log directory of their training task
+        agent_cfg.experiment_name = args_cli.task.replace("-Play", "").lower().replace("-", "_")
+
     return agent_cfg
