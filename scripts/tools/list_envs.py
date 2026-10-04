@@ -51,9 +51,11 @@ def main():
 
     # count of environments
     index = 0
-    # acquire all Isaac environments names
+    # acquire all environments provided by the openarm extension
+    # note: match on the config entry point rather than the task id, so tasks stay
+    #   listed regardless of how they are named (e.g. "Arm-Lift-Cube")
     for task_spec in gym.registry.values():
-        if "OpenArm" in task_spec.id:
+        if str((task_spec.kwargs or {}).get("env_cfg_entry_point", "")).startswith("openarm"):
             # add details to table
             table.add_row([index + 1, task_spec.id, task_spec.entry_point, task_spec.kwargs["env_cfg_entry_point"]])
             # increment count

@@ -14,7 +14,7 @@ Pass flags directly to `train_and_aggregate.py`:
 
 | Flag | Required | Default | Description |
 |---|---|---|---|
-| `--task` | Yes | — | Gym task ID (e.g. `Isaac-Lift-Cube-OpenArm-v0`) |
+| `--task` | Yes | — | Gym task ID (e.g. `Arm-Lift-Cube`) |
 | `--max_iterations` | No | agent cfg | Number of training iterations |
 | `--num_envs` | No | env cfg | Number of parallel environments |
 | `--seed` | No | 42 (rsl_rl) | Seed; set a different value for independent trials |
@@ -23,7 +23,7 @@ Pass flags directly to `train_and_aggregate.py`:
 Any other flags (e.g. `--resume --load_run <run> --checkpoint <ckpt>`) are forwarded to `train.py`.
 Fixed internally: `--headless`.
 
-Available tasks: `Isaac-Reach-OpenArm-v0`, `Isaac-Lift-Cube-OpenArm-v0`, `Isaac-Open-Drawer-OpenArm-v0`, `Isaac-Reach-OpenArm-Bi-v0`.
+Available tasks: `Isaac-Reach-OpenArm-v0`, `Arm-Lift-Cube`, `Isaac-Open-Drawer-OpenArm-v0`, `Isaac-Reach-OpenArm-Bi-v0`.
 Logs and checkpoints go to `logs/rsl_rl/<task_name>/<timestamp>/`, where `<task_name>` is the task ID lowercased with
 `-` replaced by `_` (e.g. `logs/rsl_rl/isaac_lift_cube_openarm_v0/`). Play tasks (`...-Play-v0`) resolve to the same directory.
 
@@ -47,6 +47,6 @@ If `--task` is missing, ask the user before running.
 
 ```bash
 /home/tak/isaacsim/env_isaaclab/bin/python scripts/rsl_rl/train_and_aggregate.py \
-  --task Isaac-Lift-Cube-OpenArm-v0 \
+  --task Arm-Lift-Cube \
   --max_iterations 1500
 ```

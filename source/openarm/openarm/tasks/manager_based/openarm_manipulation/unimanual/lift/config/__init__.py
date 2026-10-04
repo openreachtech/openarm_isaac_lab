@@ -26,7 +26,7 @@ from . import agents
 ##
 
 gym.register(
-    id="Isaac-Lift-Cube-OpenArm-v0",
+    id="Arm-Lift-Cube",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     kwargs={
         "env_cfg_entry_point": f"{__name__}.joint_pos_env_cfg:OpenArmCubeLiftEnvCfg",
