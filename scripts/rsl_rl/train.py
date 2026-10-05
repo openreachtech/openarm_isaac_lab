@@ -37,9 +37,33 @@ parser.add_argument(
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument(
+    "--teacher_task",
+    type=str,
+    default=None,
+    help=(
+        "Task whose log directory holds the teacher checkpoint to distill from."
+        " Only used when starting a distillation run (not with --resume)."
+    ),
+)
+parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
+parser.add_argument(
+    "--capture_depth",
+    type=int,
+    default=0,
+    help=(
+        "Capture the depth frames the policy receives for this many episodes of env 0,"
+        " then stop. 0 disables capture."
+    ),
+)
+parser.add_argument(
+    "--capture_depth_interval",
+    type=float,
+    default=0.1,
+    help="Seconds between captured depth frames (default: 0.1).",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -87,7 +111,7 @@ import torch
 from datetime import datetime
 
 import omni
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
+from rsl_rl.runners import OnPolicyRunner
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -106,6 +130,8 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import openarm.tasks  # noqa: F401
+from openarm.assets.models.modules.runners import OpenArmDistillationRunner
+from openarm.utils.depth_capture import DepthCaptureWrapper
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 
@@ -172,7 +198,17 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # save resume path before creating a new log_dir
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
-        resume_path = get_checkpoint_path(log_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
+        # A fresh distillation run bootstraps from a PPO teacher that was trained under a
+        # different task name, so its checkpoint lives in that task's log directory, not
+        # this run's. Resuming a distillation run reads from this run's directory as usual.
+        if agent_cfg.algorithm.class_name == "Distillation" and not agent_cfg.resume:
+            teacher_task = args_cli.teacher_task if args_cli.teacher_task is not None else args_cli.task
+            teacher_experiment = teacher_task.replace("-Play", "").lower().replace("-", "_")
+            checkpoint_root_path = os.path.abspath(os.path.join("logs", "rsl_rl", teacher_experiment))
+            print(f"[INFO] Loading teacher from task '{teacher_task}': {checkpoint_root_path}")
+        else:
+            checkpoint_root_path = log_root_path
+        resume_path = get_checkpoint_path(checkpoint_root_path, agent_cfg.load_run, agent_cfg.load_checkpoint)
 
     # wrap for video recording
     if args_cli.video:
@@ -186,6 +222,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print_dict(video_kwargs, nesting=4)
         env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
+    # capture what the policy sees before the rsl-rl wrapper hides the observation dict
+    if args_cli.capture_depth > 0:
+        env = DepthCaptureWrapper(
+            env,
+            out_dir=os.path.join(log_dir, "depth_capture"),
+            num_episodes=args_cli.capture_depth,
+            interval_s=args_cli.capture_depth_interval,
+        )
+
     # wrap around environment for rsl-rl
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
@@ -193,7 +238,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.class_name == "OnPolicyRunner":
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
-        runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+        # OpenArmDistillationRunner is DistillationRunner plus the registration hook that
+        # makes the project's student / algorithm classes resolvable by name.
+        runner = OpenArmDistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     # write git state to logs

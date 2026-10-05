@@ -44,7 +44,13 @@ class OpenArmCubeLiftEnvCfg(LiftEnvCfg):
         super().__post_init__()
 
         # Set OpenArm as robot
-        self.scene.robot = OPEN_ARM_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+        # note: the base is raised off the table so the arm sits where it would on a
+        #   quadruped's back, with the depth camera just below it (see
+        #   doc/design/student_distillation_design.md)
+        self.scene.robot = OPEN_ARM_CFG.replace(
+            prim_path="{ENV_REGEX_NS}/Robot",
+            init_state=OPEN_ARM_CFG.init_state.replace(pos=(0.0, 0.0, 0.15)),
+        )
 
         # Set actions for the specific robot type (OpenArm)
         self.actions.arm_action = mdp.JointPositionActionCfg(

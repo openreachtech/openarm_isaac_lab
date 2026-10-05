@@ -37,3 +37,29 @@ def object_position_in_robot_root_frame(
     object_pos_w = object.data.root_pos_w[:, :3]
     object_pos_b, _ = subtract_frame_transforms(robot.data.root_pos_w, robot.data.root_quat_w, object_pos_w)
     return object_pos_b
+
+
+def depth_image_flat(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("depth_camera"),
+    data_type: str = "distance_to_image_plane",
+    near: float = 0.1,
+    far: float = 1.2,
+) -> torch.Tensor:
+    """Flattened depth image, clipped to the camera range and scaled to [0, 1].
+
+    The observation manager concatenates terms with ``torch.cat`` and does not flatten, so the
+    image has to be returned as ``(num_envs, height * width)`` to sit alongside the proprioceptive
+    terms in the same group. The student model reshapes it back (see
+    ``openarm.assets.models.depth_student``).
+
+    Rays that hit nothing come back as ``inf``; they are mapped to ``far`` so the stored
+    observation stays finite.
+    """
+    sensor = env.scene.sensors[sensor_cfg.name]
+    image = sensor.data.output[data_type]
+    # (N, H, W, 1) or (N, H, W) depending on the sensor
+    image = image.squeeze(-1) if image.ndim == 4 else image
+    image = torch.nan_to_num(image, nan=far, posinf=far, neginf=near)
+    image = image.clamp(near, far)
+    return ((image - near) / (far - near)).flatten(start_dim=1)

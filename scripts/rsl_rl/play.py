@@ -67,7 +67,7 @@ import os
 import time
 import torch
 
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
+from rsl_rl.runners import OnPolicyRunner
 
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -87,6 +87,9 @@ from isaaclab_tasks.utils import get_checkpoint_path, load_cfg_from_registry
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import openarm.tasks  # noqa: F401
+from openarm.assets.models.modules.runners import OpenArmDistillationRunner
+from openarm.assets.models.depth_student_exporter import export_depth_student
+from openarm.assets.models.modules.student_teacher import DepthStudentTeacher
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 
@@ -156,7 +159,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.class_name == "OnPolicyRunner":
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
-        runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+        runner = OpenArmDistillationRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     runner.load(resume_path)
@@ -183,8 +186,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-    export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
-    export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
+    if isinstance(policy_nn, DepthStudentTeacher):
+        # Isaac Lab's exporters index the actor as a Sequential; the depth student is not.
+        export_depth_student(policy_nn.student, path=export_model_dir, normalizer=normalizer)
+    else:
+        export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.pt")
+        export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
 
     dt = env.unwrapped.step_dt
 

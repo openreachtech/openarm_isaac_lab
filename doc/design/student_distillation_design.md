@@ -3,7 +3,7 @@
 Teacher（特権情報つき PPO）から、Depth 画像を入力とする Student へ方策蒸留するための設計。
 
 - 参考論文: [DextrAH-G](../papars/DextrAH-G_Pixels-to-Action_Dexterous_Arm-Hand_Grasping_with_Geometric_Fabrics.md) — Student アーキテクチャ（F.3）、損失（3.3）、Depth 拡張（F.1）
-- 参考実装: `unitree_rl_lab` の `origin/feat/wall` — `Go2-v3-Phase1`（teacher）/ `Go2-v3-Student-Phase1`（student）
+- 参考実装: `unitree_rl_lab` の `origin/feat/wall` — `Go2-v3-Level1`（teacher）/ `Go2-v3-Student-Level1`（student）
   - 注: ローカル `feat/wall` は 4 コミット古く Student タスクを含まない。`origin/feat/wall` を参照すること。
 
 決定事項: **カメラは固定（三人称）**、**80×60 / 256 envs** から始める。
@@ -60,7 +60,7 @@ RGB は使わない。DextrAH-G も raw depth 単体（`I ∈ [0.5,1.5]^{160×12
 | 要素 | 値（env 座標） |
 |---|---|
 | テーブル天面 | `z = 0`（`[0.5, 0, 0]` 配置） |
-| Cube 初期位置 | `[0.4, 0, 0.055]` |
+| Cube 初期位置 | `[0.4, 0, 0.055]`（静止時は `z = 0.021`） |
 | Cube リセット範囲 | x `[0.3, 0.5]`、y `[-0.25, 0.25]` |
 | 目標位置範囲（基部相対） | x `[0.2, 0.4]`、y `[-0.2, 0.2]`、z `[0.15, 0.4]` |
 | env_spacing | 2.5 m |
@@ -79,7 +79,7 @@ RGB は使わない。DextrAH-G も raw depth 単体（`I ∈ [0.5,1.5]^{160×12
 | FOV | 87° × 71°（4:3、RealSense D435 相当） |
 | clipping | `(0.1, 1.2)` |
 
-カメラ姿勢は env cfg の定数として切り出す。Phase2 で摂動を加えるため、どのみち変数で持つ必要がある。
+カメラ姿勢は env cfg の定数として切り出す。Level2 で摂動を加えるため、どのみち変数で持つ必要がある。
 
 ### 画角のカバー範囲
 
@@ -234,8 +234,8 @@ source/openarm/openarm/
 | 役割 | タスク ID |
 |---|---|
 | Teacher（既存） | `Arm-Lift-Cube` |
-| Student Phase1 | `Arm-Lift-Cube-Student-Phase1` |
-| Student Phase2 | `Arm-Lift-Cube-Student-Phase2` |
+| Student Level1 | `Arm-Lift-Cube-Student-Level1` |
+| Student Level2 | `Arm-Lift-Cube-Student-Level2` |
 
 `rplay arm_lift_cube_student_phase1` で引けることを確認済み。
 
@@ -283,9 +283,9 @@ if cnt % self.gradient_length == 0:
 
 ---
 
-## 7. Depth 拡張（Phase2）
+## 7. Depth 拡張（Level2）
 
-論文 F.1 より。Phase1 ではすべて無効、Phase2 で投入する。
+論文 F.1 より。Level1 ではすべて無効、Level2 で投入する。
 
 | 拡張 | パラメータ |
 |---|---|
@@ -299,25 +299,73 @@ if cnt % self.gradient_length == 0:
 
 ---
 
-## 8. 学習フェーズ
+## 8. 難易度レベル
 
-unitree の Student-Phase1 / Phase2 分割（Miki et al. S3 に由来）に倣う。
+一度に全部を課さず、段階的に難易度を上げる。
 
-| | Phase1 | Phase2 |
-|---|---|---|
-| Depth | クリーン | 拡張をランプ投入 |
-| カメラ位置 | 固定 | 摂動あり |
-| ねらい | teacher の模倣と `x̂_obj` 推定の獲得 | sim2real ギャップへの頑健化 |
+**この段階分けは DextrAH-G 由来ではない。** 論文は Teacher / Student の 2 段しか分けておらず、F.1 の Depth 拡張は蒸留中ずっと有効でランプ投入しない。段階分けは Miki et al. S3（unitree の Student-Phase1 / Phase2 が倣っている構成）から採っている。本設計は「DextrAH-G のアーキテクチャと損失」＋「Miki の段階的学習」の組み合わせ。
 
-Phase2 は Phase1 のチェックポイントから `--resume` で継続する。
+Miki の構成では、まず理想的な知覚のもとで写像を獲得させ、その後で情報を削っていく。各レベルは1つ下のチェックポイントから `--resume` で継続する。
+
+| | Depth | カメラ位置 | ねらい |
+|---|---|---|---|
+| **Level1** | クリーン | 固定 | teacher の模倣と `x̂_obj` 推定の獲得 |
+| Level2 | クリーン | 摂動あり | 実機カメラの校正誤差への頑健化 |
+| Level3+ | §7 の拡張を投入 | 摂動あり | センサノイズへの頑健化 |
+
+Level2 以降は未実装。番号は意図的に開いてあり、難易度の軸（物体形状、テーブル高さ、外乱など）を増やす余地を残している。
+
+レベルを分ける理由は、Level1 が**設計の前提を検証する役割**も兼ねているため。理想的な知覚で `x̂_obj` が収束しないなら、それはノイズの問題ではなく単一フレーム・非再帰という設計判断の問題だと切り分けられる（§10）。
 
 ---
 
-## 9. 未解決・リスク
+## 9. 実行方法
 
-- **Teacher の再学習が必須**。アーム基部を `z = 0` → `0.15` に上げたため、`model_1998.pt` は別の運動学で学習された方策になる。Cube は基部より 9.5cm 下（以前は 5.5cm 上）となり、相対幾何が 15cm 変わる。実績では 2000 iter で約 15 分。
-- **基部を上げた状態での到達可能性**。Cube リセット範囲の奥かつ横の隅（`x=0.5, y=±0.25`）に、要求姿勢（`pitch = π/2`、上から把持）で手が届くか要確認。初期関節姿勢（`joint1=1.57, joint3=-1.57, joint4=1.57`）も基部が上がった前提では最適でない可能性がある。届かないなら Cube のリセット範囲を狭めるか基部高さを見直す。
-- **カメラ画角は幾何計算のみ**で、実際の描画は未確認。テーブル脚やアーム初期姿勢が画角をどれだけ占めるかは 1 フレーム描画して確認する。
-- **単一フレームで `object_position` を十分な精度で推定できるか**が最大の未検証点。本設計が再帰を落とした根拠そのものなので、Phase1 で `x̂_obj` の誤差を局面別（接近 / 把持遷移 / 運搬）に見る。把持遷移で明確に悪化するなら `history_length` を検討する。
-- **レンダリングのスループット未計測**。256 envs での TiledCamera のコストが訓練時間を支配する可能性がある。Phase1 の最初の数百イテレーションで実測する。
+Student タスクはカメラを持つので **`--enable_cameras` が必須**。teacher のチェックポイントは別タスク名のログディレクトリにあるため `--teacher_task` で指定する（これがないと student 自身の空のログディレクトリを探して失敗する）。
+
+```bash
+# Level1: teacher から蒸留
+python scripts/rsl_rl/train.py \
+  --task Arm-Lift-Cube-Student-Level1 --teacher_task Arm-Lift-Cube \
+  --headless --enable_cameras
+
+# 再開（teacher ではなく student 自身の run を読む）
+python scripts/rsl_rl/train.py \
+  --task Arm-Lift-Cube-Student-Level1 --resume --load_run <run> \
+  --headless --enable_cameras
+```
+
+### 検証済みの実測値
+
+2026-10-04 時点、3 iteration の結合テストと 9 env のレンダリングで確認:
+
+| 項目 | 実測 |
+|---|---|
+| `policy` 観測 | `(4833,)` = 9 + 9 + 8 + 7 + 4800（depth が末尾） |
+| `teacher` 観測 | `(36,)`、`object_position` は index 18–21 |
+| conv 出力 | `64×7×10 = 4480` → head 128 → trunk 入力 161 |
+| Student パラメータ | 696,715（`cnn.head` が 590,080 で最大） |
+| Teacher ロード | `strict=True` で全キー一致（素の `MLP([256,128,64], elu)`） |
+| depth 値域 | `0.044 – 1.000`、全て有限 |
+| far plane 占有率 | **58.7%** |
+| Cube の可視性 | 全フレームで確認（約 8px 四方） |
+
+far plane が 59% を占めるのは、水平カメラで静止時にテーブル上空に何も無いため。そこは持ち上げ後に Cube が通る領域なので恒久的な無駄ではないが、俯角をつけるかどうかの判断材料になる。
+
+Cube が 80×60 で約 8px しかない点は、位置回帰の精度上限に効く可能性がある。`x̂_obj` の誤差が頭打ちになるようなら解像度を上げる。
+
+---
+
+## 10. 未解決・リスク
+
+解決済み（2026-10-04）:
+
+- ~~**Teacher の再学習**~~ 完了。基部 `z = 0.15` で 2000 iter 再学習し、`lifting_object 13.05` / `object_dropping 0.000` / `position_error 0.085`。基部 `z = 0` のとき（13.94 / 0.000 / 0.083）をやや下回るが、掴んで保持できている。run: `logs/rsl_rl/arm_lift_cube/2026-10-04_19-40-23`。
+- ~~**基部を上げた状態での到達可能性**~~ 上記の再学習が成立したことで確認済み。なお基部〜Cube の距離自体はほとんど変わらない（最遠隅で 0.562 → 0.567 m）。変わるのは向きで、`dz` が `+0.055` から `−0.095` になる。
+- ~~**カメラ画角**~~ 描画で確認済み（§9）。Cube は全フレームに写る。
+
+残り:
+
+- **単一フレームで `object_position` を十分な精度で推定できるか**が最大の未検証点。本設計が再帰を落とした根拠そのものなので、Level1 で `x̂_obj` の誤差を局面別（接近 / 把持遷移 / 運搬）に見る。把持遷移で明確に悪化するなら `history_length` を検討する。
+- **レンダリングのスループット未計測**。256 envs での TiledCamera のコストが訓練時間を支配する可能性がある。Level1 の最初の数百イテレーションで実測する。
 - **Teacher が非再帰（MLP）** である点。論文は state-based teacher のほうが成功率が高いと述べているため、Teacher 自体の性能上限は論文より低い可能性がある。ただし Student は Teacher を模倣するだけなので、蒸留の成否とは独立。

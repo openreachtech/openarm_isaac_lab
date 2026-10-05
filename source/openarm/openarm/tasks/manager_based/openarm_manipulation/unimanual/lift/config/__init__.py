@@ -38,3 +38,20 @@ gym.register(
     },
     disable_env_checker=True,
 )
+
+##
+# Depth student distillation (see doc/design/student_distillation_design.md)
+##
+
+gym.register(
+    id="Arm-Lift-Cube-Student-Level1",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.student_env_cfg:RobotEnvCfgStudentLevel1",
+        "play_env_cfg_entry_point": f"{__name__}.student_env_cfg:RobotPlayEnvCfgStudentLevel1",
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_distillation_cfg:OpenArmLiftCubeDistillationRunnerCfg"
+        ),
+    },
+    disable_env_checker=True,
+)
