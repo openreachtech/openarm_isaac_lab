@@ -1,0 +1,14 @@
+# Ablation variants are local scratch. Each tryN.py is a throwaway configuration that
+# answers one question and is then worthless -- what it measured belongs in SUMMARY.md,
+# which is committed. Keeping them out of history also avoids the trap unitree_rl_lab
+# recorded: stale tries lingering in the tree, silently inheriting later edits to the
+# configs they build on, and being re-run as if they still meant what they did.
+#
+# __init__.py registers whichever tryN.py happen to exist, so a checkout without any is
+# fine -- it just registers no sandbox tasks.
+try*.py
+
+# ablation.py has no committed caller once the tries are ignored, so it would rot
+# unnoticed -- it already had, still referencing a reset_robot_joints term that the
+# production EventCfg no longer declares. Keep it local alongside the tries it serves.
+ablation.py

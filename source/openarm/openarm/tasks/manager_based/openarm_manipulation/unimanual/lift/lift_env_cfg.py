@@ -35,6 +35,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransformerCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
 from isaaclab.utils import configclass
+from isaaclab.utils.noise import GaussianNoiseCfg, NoiseModelWithAdditiveBiasCfg
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from . import mdp
@@ -88,6 +89,46 @@ class ObjectTableSceneCfg(InteractiveSceneCfg):
 ##
 # MDP settings
 ##
+
+OBJECT_SCALE_RANGE = (0.72, 0.88)
+"""Absolute ``xformOp:scale`` range for the cube; nominal is 0.80.
+
+Note this *replaces* the 0.8 in the spawn config rather than multiplying it, so the
+range is absolute. Measured edge lengths are 3.72-4.68 cm against a nominal 4.20 cm, i.e.
+about +/-11%.
+
+Deliberately mild. The limits it has to stay inside:
+  grasp   face diagonal must clear the 0.088 m gripper aperture; at 0.88 that is
+          0.065 m, still comfortable.
+  lift    ``minimal_height = 0.04`` is a fixed threshold and the cube rests at
+          edge/2, i.e. 0.019-0.023 m, so the gate stays meaningful at both ends.
+  vision  a smaller cube means fewer pixels for the student; at 0.72 and 0.5 m away
+          it spans about 5 px.
+
+Isaac Lab refuses this term outright unless ``replicate_physics`` is False, because a
+replicated scene shares one collision prototype across environments -- the visuals would
+vary while the physics did not.
+
+Applied in the "prestartup" mode, so each environment gets one fixed size for the whole
+run rather than a fresh one per episode. Across 2048 environments that is still a wide
+spread of sizes within a batch.
+"""
+
+OBJECT_POSITION_NOISE_STD = 0.02
+"""Std (m) of the noise on the teacher's object-position observation.
+
+DextrAH-G trains its privileged teacher on a corrupted object pose so the policy stays
+usable once a depth student -- whose position estimate is only accurate to a few cm --
+drives it (paper section 3.2 "Pose Noise", appendix E.4, where
+sigma_xyz,uncorr = sigma_xyz,corr = 0.02 m). The same value is used here.
+
+Two components, as in the paper: one resampled every step, one sampled per episode and
+held. The per-episode bias is what makes a *systematic* offset survivable; step noise
+alone would simply average out.
+
+Only the teacher sees this. Distillation reads the teacher group with
+``enable_corruption = False``, so the labels the student imitates stay clean.
+"""
 
 
 @configclass
@@ -145,7 +186,20 @@ class ObservationsCfg:
                 )
             },
         )
-        object_position = ObsTerm(func=mdp.object_position_in_robot_root_frame)
+        object_position = ObsTerm(
+            func=mdp.object_position_in_robot_root_frame,
+            noise=NoiseModelWithAdditiveBiasCfg(
+                # per-step, zero-mean
+                noise_cfg=GaussianNoiseCfg(
+                    mean=0.0, std=OBJECT_POSITION_NOISE_STD, operation="add"
+                ),
+                # per-episode bias: "abs" replaces the stored bias with a fresh sample on
+                # reset, rather than adding to it (which would random-walk across episodes)
+                bias_noise_cfg=GaussianNoiseCfg(
+                    mean=0.0, std=OBJECT_POSITION_NOISE_STD, operation="abs"
+                ),
+            ),
+        )
         target_object_position = ObsTerm(
             func=mdp.generated_commands, params={"command_name": "object_pose"}
         )
@@ -169,11 +223,36 @@ class EventCfg:
         func=mdp.reset_root_state_uniform,
         mode="reset",
         params={
-            "pose_range": {"x": (-0.1, 0.1), "y": (-0.25, 0.25), "z": (0.0, 0.0)},
+            # x/y are already saturated: the far corner (0.50, 0.25) sits 0.559 m from
+            # the base against ~0.60 m of reach at table height, and the near corner
+            # (0.30, 0.25) leaves 7 mm inside the camera's 85.7 deg FOV. yaw is the one
+            # axis with room. Measurements in doc/design/student_distillation_design.md.
+            "pose_range": {
+                "x": (-0.1, 0.1),
+                "y": (-0.25, 0.25),
+                "z": (0.0, 0.0),
+                "yaw": (-math.pi, math.pi),
+            },
             "velocity_range": {},
             "asset_cfg": SceneEntityCfg("object", body_names="Object"),
         },
     )
+
+    randomize_object_scale = EventTerm(
+        func=mdp.randomize_rigid_body_scale,
+        # "prestartup" is this version's pre-simulation mode (the function's docstring
+        # still calls it "usd"); it runs before sim.reset() parses the stage. A wrong
+        # mode name here is silently ignored rather than raising.
+        mode="prestartup",
+        params={
+            "scale_range": OBJECT_SCALE_RANGE,
+            "asset_cfg": SceneEntityCfg("object"),
+        },
+    )
+
+    # Deliberately no initial arm pose randomisation: a +-0.1 rad joint offset was the
+    # most damaging change in the 2026-10-06 ablation, taking final lifting_object from
+    # 8.952 to 0.121. See config/sandbox/SUMMARY.md before reintroducing it.
 
 
 @configclass
@@ -226,18 +305,46 @@ class TerminationsCfg:
     )
 
 
+SMOOTHNESS_PENALTY_ONSET = 10000
+"""When the action_rate / joint_vel penalties jump from 1e-4 to 1e-1, in env steps.
+
+Counted in ``env.common_step_counter``, which advances once per environment step
+regardless of ``num_envs``, so with ``num_steps_per_env = 24`` this lands at iteration
+417 whatever the batch size.
+
+This is a cliff, and worth knowing about before adding difficulty. In the 2026-10-06
+ablation (config/sandbox/SUMMARY.md) every configuration that had started lifting by
+iteration 399 went on to converge, and every one that had not was crushed by the ramp
+and never recovered -- the action noise std collapsed to 0.07 and the policy settled
+into reaching without ever grasping. There was nothing in between. Delaying the ramp
+to 30000 keeps exploration alive but does not by itself make a too-hard task learnable.
+
+Kept at the original 10000 because the delay only slowed things down once the real
+blocker (initial arm pose randomisation) was removed: 8.95 lift at 1000 iterations
+here, against 6.83 at 1000 and 8.68 at 2500 with the ramp at 30000.
+"""
+
+
 @configclass
 class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
     action_rate = CurrTerm(
         func=mdp.modify_reward_weight,
-        params={"term_name": "action_rate", "weight": -1e-1, "num_steps": 10000},
+        params={
+            "term_name": "action_rate",
+            "weight": -1e-1,
+            "num_steps": SMOOTHNESS_PENALTY_ONSET,
+        },
     )
 
     joint_vel = CurrTerm(
         func=mdp.modify_reward_weight,
-        params={"term_name": "joint_vel", "weight": -1e-1, "num_steps": 10000},
+        params={
+            "term_name": "joint_vel",
+            "weight": -1e-1,
+            "num_steps": SMOOTHNESS_PENALTY_ONSET,
+        },
     )
 
 
@@ -251,7 +358,15 @@ class LiftEnvCfg(ManagerBasedRLEnvCfg):
     """Configuration for the lifting environment."""
 
     # Scene settings
-    scene: ObjectTableSceneCfg = ObjectTableSceneCfg(num_envs=4096, env_spacing=2.5)
+    # replicate_physics must be off for randomize_object_scale (Isaac Lab raises if it is
+    # not). Measured cost of turning it off: scene build 4 s -> 48 s at 2048 envs, and
+    # host RAM about 11.8 GB per 1024 envs. Step throughput is unaffected.
+    #
+    # Hence 2048 rather than the usual 4096: 4096 needs ~46 GB of the machine's 62 GB and
+    # was OOM-killed with other work running. 2048 peaks at 24 GB.
+    scene: ObjectTableSceneCfg = ObjectTableSceneCfg(
+        num_envs=2048, env_spacing=2.5, replicate_physics=False
+    )
     # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()

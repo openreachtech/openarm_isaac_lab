@@ -63,7 +63,11 @@ CAMERA_CONVENTION = "world"
 
 CAMERA_HORIZONTAL_APERTURE = 20.955
 CAMERA_FOCAL_LENGTH = 11.3
-"""~87 deg horizontal FOV: 2 * atan(20.955 / (2 * 11.3))."""
+"""~85.7 deg horizontal FOV: 2 * atan(20.955 / (2 * 11.3)).
+
+Vertical follows from the aspect ratio: 20.955 * 60 / 80 gives ~69.6 deg.
+So the camera sees |y| < 0.927 d horizontally and 0.10 +/- 0.695 d vertically.
+"""
 
 STUDENT_STATE_DIM = 33
 """joint_pos 9 + joint_vel 9 + last_action 8 + target_object_position 7."""

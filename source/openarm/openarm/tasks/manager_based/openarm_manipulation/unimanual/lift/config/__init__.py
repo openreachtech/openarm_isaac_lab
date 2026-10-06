@@ -55,3 +55,9 @@ gym.register(
     },
     disable_env_checker=True,
 )
+
+##
+# Ablation sandbox (temporary -- see sandbox/__init__.py)
+##
+
+from . import sandbox  # noqa: E402, F401
