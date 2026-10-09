@@ -55,7 +55,7 @@ DEPTH_NEAR = 0.1
 DEPTH_FAR = 1.2
 
 CAMERA_POS = (0.0, 0.0, 0.10)
-"""Just below the arm base at z = 0.15, looking down the +x axis (no tilt)."""
+"""Level with the arm base at z = 0.10, looking down the +x axis (no tilt)."""
 
 CAMERA_ROT = (1.0, 0.0, 0.0, 0.0)
 CAMERA_CONVENTION = "world"

@@ -112,3 +112,148 @@ Adopted in `lift_env_cfg.py`: observation noise, cube yaw and cube scale on,
   (12.754 / 12.969 / 12.756), the clear failures (0.232 / 0.121) and the try5-to-try8
   jump as solid; treat try1's 7.016 against try8's 8.952 as directional only, since
   try8 has strictly more randomisation yet scored higher.
+
+
+---
+
+## Narrowing the cube's spawn box, and a seed that will not train (2026-10-07)
+
+### Why
+
+Measuring the teacher trained on the wide box (x 0.30-0.50, y +-0.25) over 4096
+episodes showed grasping failed as a clean function of distance from the arm base:
+
+    0.30-0.35 m   1.0%      0.45-0.50 m  36.7%
+    0.35-0.40 m   1.9%      0.50-0.56 m  75.6%
+    0.40-0.45 m   9.6%                   20.8% overall
+
+Cube size and yaw had no effect (20-22% in every bin) and removing the observation
+noise barely helped, so it was reach, not perception. The TCP reaches 0.616 m from the
+base and 0.602 m horizontally at table height, but a top-down grasp needs more arm
+folded than that; the practical limit is about 0.45 m, 15 cm short of the kinematic one.
+
+### What changed
+
+Spawn box narrowed to x in [0.30, 0.42], y in [-0.18, 0.18], far corner 0.559 -> 0.457 m.
+
+Separately, `noise_std_type` was switched from rsl_rl's default `"scalar"` to `"log"`.
+Under `"scalar"` the action-noise std is a raw `nn.Parameter` handed to `Normal` as its
+scale with nothing keeping it positive; one run crashed at iteration 364 with
+"normal expects all elements of std >= 0.0". `"log"` parameterises it as `exp(log_std)`.
+This was not only a crash fix: under `"log"` the std rose as high as 3.48 where
+`"scalar"` peaked at 2.02 before collapsing, so exploration survives much longer.
+
+### Result
+
+| | wide box, "scalar" | narrow box, "log", seed 42 |
+|---|---|---|
+| lifting_object | 9.356 | **11.266** |
+| object_goal_tracking_fine_grained | 0.542 | **1.403** |
+| position_error | 0.146 | **0.104** |
+| never picked up (4096 episodes) | 20.8% | **2.9%** |
+| held at episode end | 78.8% | **95.4%** |
+| final goal distance, successes | 6.7 cm | **3.3 cm** |
+
+Failure is now flat across the box: 1.8% / 2.4% / 4.9% over the three distance bins,
+with the worst cell the far corner (x 0.40, y +0.20) at 17%.
+
+### The open problem: it trains about half the time
+
+Same configuration, same iteration count, seed 7 instead of 42: `lifting_object` 0.127,
+never grasped. The failure mode is consistent and distinct from the curriculum cliff --
+`reaching_object` saturates around 0.63-0.71 while lifting stays at its random-policy
+value, i.e. the gripper learns to hover a few centimetres from the cube and never
+closes. Only once that has gone on long enough does the smoothness ramp finish it off.
+
+Four narrow-box runs so far: seed 42 under `"scalar"` failed twice (once crushed by the
+ramp at iteration 417, once at 1250), seed 7 crashed on the std bug, and after the
+`"log"` fix seed 42 succeeded and seed 7 did not. So the honest count after the fix is
+one success in two.
+
+A single failed run is therefore not evidence that a configuration is wrong. Anything
+compared from here needs more than one seed.
+
+The untested fix for the hovering optimum is the shaping term itself: `reaching_object`
+pays `1.1 * (1 - tanh(d / 0.1))`, which at the 3.3 cm hover distance is still worth
+about 0.7 of its maximum. Tightening the kernel or cutting the weight would stop
+hovering from paying, at the risk of weakening the guidance that gets the arm there.
+
+
+---
+
+## Where the trembling came from: the arm base height (2026-10-08)
+
+### Why
+
+The teacher held the cube but shook while doing it, in about a fifth of episodes, worst
+when the goal sat close to the base (45% under 0.32 m against 7% in the middle). Tracing
+one episode showed the commanded joint angle for joint7 asking for 9.8 rad against a
++-1.571 limit -- the policy was driving far outside the reachable range, where every
+command has the same effect and the reward is flat, so it drifted. The actual joint was
+*smoother* than the target, which ruled out the actuator.
+
+### What was tried first, and why it was wrong
+
+Three changes aimed at that diagnosis, all since reverted:
+
+| change | result |
+|---|---|
+| action normalised so -1/+1 spans each joint's range | joint velocity while holding 0.408 -> 0.973; trembling spread from 20% of episodes to 98% |
+| `action_out_of_range_l2`, penalising only commands past the range | action magnitude 7.4 -> 1.7, no effect on the trembling |
+| `joint_target_rate_l2`, smoothness measured in radians rather than action units | at weight -1.0 the trembling nearly vanished (0.094) but `fine_grained` fell to 0.906 and one seed in two unlearned its grasp entirely; at -0.2 it was too weak to help |
+
+Worse, under a strong rate penalty the policy found that the cheapest way to hold still
+is to **push into a joint stop**: joint2 sat at exactly 1.745 in all 972 held episodes,
+standard deviation 0.000, which is the "every arm has the same odd shape" the behaviour
+showed on screen. That is the unnatural-but-works-in-sim failure DextrAH-G warns about
+(section 3.2, figures 10-12). It also appeared at weight -0.2 on one seed and not the
+other, so it was never a matter of tuning the weight.
+
+Two things found along the way were real and were kept: `noise_std_type` must be `"log"`
+(the default `"scalar"` feeds an unconstrained parameter to `Normal` as its scale and one
+run crashed with "normal expects all elements of std >= 0.0"), and `action_rate_l2`
+measures smoothness in action units, so its meaning silently changes with the scaling.
+
+### The actual cause
+
+Restoring the first-commit task as ``Isaac-Lift-Cube-OpenArm-v0`` showed it holding the
+cube cleanly and symmetrically. Sweeping only the base height over that otherwise
+untouched task:
+
+| base z | fine_grained | goal distance y<0 / y>0 | left-right gap |
+|---|---|---|---|
+| 0.00 | 3.820 | 0.36 / 0.35 cm | 0.01 cm |
+| 0.05 | 3.699 | 0.21 / 0.23 cm | 0.02 cm |
+| 0.10 | 3.499 | 0.29 / 0.41 cm | 0.12 cm |
+| 0.15 | 1.566 | 3.66 / 5.41 cm | 1.75 cm |
+
+Not a gradual cost but a cliff between 0.10 and 0.15, and the mechanism is visible in
+the joint angles: at 0.05 both joint5 and joint7 still differ between left and right
+goals, at 0.10 joint5 is pinned to its stop and only joint7 adjusts, and at 0.15 joint7
+is pinned too. With nothing left to aim with, the arm leans the same way whichever side
+the goal is on. joint6, whose travel is +-0.785 against +-1.571 for its neighbours, sits
+on a stop at every height.
+
+### Adopted
+
+Base height 0.15 -> **0.10**, the action-space changes reverted, everything else kept.
+Two seeds, 2500 iterations, with all of the randomisation on:
+
+| | lifting_object | fine_grained | position_error |
+|---|---|---|---|
+| seed 42 | 11.78 | 0.678 | 0.097 |
+| seed 7 | 11.59 | 1.343 | 0.107 |
+
+against 11.27 / 1.403 / 0.104 at the old 0.15. Trembling and the one-sided posture are
+both gone on inspection.
+
+That also separates the two costs at last. Base height 0 -> 0.10 costs 8% of
+`fine_grained` (3.820 -> 3.499); the randomisation -- observation noise above all --
+costs the remaining 62-81% (3.499 -> 0.68-1.34). The noise is a deliberate trade: half
+of its sigma = 0.02 is a bias held for the whole episode, against a reward kernel 5 cm
+wide, and it buys a teacher that still works when a depth student's estimate is a few
+centimetres off.
+
+Note the spread between the two seeds: `fine_grained` 0.678 against 1.343, a factor of
+two, while `lifting_object` and `position_error` barely move. Grasping and carrying are
+stable; only the last few centimetres of placement swing with the seed.

@@ -61,3 +61,9 @@ gym.register(
 ##
 
 from . import sandbox  # noqa: E402, F401
+
+##
+# The task as it was at the first commit, kept as a reference baseline
+##
+
+from . import original  # noqa: E402, F401

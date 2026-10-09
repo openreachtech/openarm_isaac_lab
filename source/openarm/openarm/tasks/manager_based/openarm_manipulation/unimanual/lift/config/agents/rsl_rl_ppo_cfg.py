@@ -31,6 +31,12 @@ class OpenArmLiftCubePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     empirical_normalization = False
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=1.0,
+        # rsl_rl's default "scalar" hands the raw nn.Parameter to Normal as its scale,
+        # with nothing keeping it positive, and a run on 2026-10-07 crashed at iteration
+        # 364 with "normal expects all elements of std >= 0.0" after the entropy bonus
+        # had pushed the std up to ~2 and the policy gradient drove it back through zero.
+        # "log" parameterises it as exp(log_std), which cannot go negative.
+        noise_std_type="log",
         actor_hidden_dims=[256, 128, 64],
         critic_hidden_dims=[256, 128, 64],
         activation="elu",

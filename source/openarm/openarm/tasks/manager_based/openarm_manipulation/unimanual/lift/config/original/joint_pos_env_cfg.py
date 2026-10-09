@@ -21,8 +21,8 @@ from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from .. import mdp
-from ..lift_env_cfg import (
+from ... import mdp
+from .lift_env_cfg import (
     LiftEnvCfg,
 )
 
@@ -43,36 +43,17 @@ class OpenArmCubeLiftEnvCfg(LiftEnvCfg):
         # post init of parent
         super().__post_init__()
 
-        # The base is raised off the table so the arm sits where it would on a
-        # quadruped's back, with the depth camera alongside it.
-        #
-        # 0.10, not the 0.15 originally planned. A sweep on 2026-10-08 over the
-        # otherwise-untouched v0 task found a cliff between the two:
-        #
-        #   base    fine_grained   goal distance y<0 / y>0   left-right gap
-        #   0.00        3.820          0.36 / 0.35 cm           0.01 cm
-        #   0.05        3.699          0.21 / 0.23 cm           0.02 cm
-        #   0.10        3.499          0.29 / 0.41 cm           0.12 cm
-        #   0.15        1.566          3.66 / 5.41 cm           1.75 cm
-        #
-        # The cause is the wrist running out of travel. At 0.05 both joint5 and joint7
-        # still differ between left and right goals; at 0.10 joint5 is pinned and only
-        # joint7 adjusts; at 0.15 joint7 is pinned too and nothing is left to aim with,
-        # so the arm leans the same way whichever side the goal is on.
-        self.scene.robot = OPEN_ARM_CFG.replace(
-            prim_path="{ENV_REGEX_NS}/Robot",
-            init_state=OPEN_ARM_CFG.init_state.replace(pos=(0.0, 0.0, 0.10)),
-        )
+        # Set OpenArm as robot
+        self.scene.robot = OPEN_ARM_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
 
-        # Stock Isaac Lab action term. Normalising this to each joint's range was tried
-        # on 2026-10-08 to cure the trembling and made things worse -- see
-        # config/sandbox/SUMMARY.md. The trembling turned out to come from the base
-        # height, not the action scaling.
+        # Set actions for the specific robot type (OpenArm)
         self.actions.arm_action = mdp.JointPositionActionCfg(
             asset_name="robot",
-            joint_names=["openarm_joint.*"],
+            joint_names=[
+                "openarm_joint.*",
+            ],
             scale=0.5,
-            use_default_offset=True,
+            use_default_offset=True,  # False
         )
 
         self.actions.gripper_action = mdp.BinaryJointPositionActionCfg(
