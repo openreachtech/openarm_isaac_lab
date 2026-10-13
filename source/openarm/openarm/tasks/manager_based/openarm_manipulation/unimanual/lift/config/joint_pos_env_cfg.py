@@ -23,6 +23,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 from .. import mdp
 from ..lift_env_cfg import (
+    ARM_INIT_NUM_LEVELS,
     LiftEnvCfg,
 )
 
@@ -133,3 +134,9 @@ class OpenArmCubeLiftEnvCfg_PLAY(OpenArmCubeLiftEnvCfg):
         self.scene.env_spacing = 2.5
         # disable randomization for play
         self.observations.policy.enable_corruption = False
+
+        # Outside training the curriculum would restart from level 0 and need hundreds
+        # of resets to climb, so play would always show the one default pose. Pin it to
+        # the top level instead, and drop the curriculum that would otherwise fight it.
+        self.events.reset_robot_joints.params["fixed_level"] = ARM_INIT_NUM_LEVELS
+        self.curriculum.arm_init_level = None

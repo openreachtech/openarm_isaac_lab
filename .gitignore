@@ -20,3 +20,6 @@ outputs
 .vscode
 */tutorials/
 datasets
+
+# NvStreamer trace logs; livestream writes these when ${data} is left unexpanded
+${data}/

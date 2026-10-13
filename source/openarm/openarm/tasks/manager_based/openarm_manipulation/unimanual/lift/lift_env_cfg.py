@@ -114,6 +114,24 @@ run rather than a fresh one per episode. Across 2048 environments that is still 
 spread of sizes within a batch.
 """
 
+ARM_INIT_MAX_RANGE = 0.2
+"""The +- joint offset at the top level, in radians.
+
+Measured at reset, +-0.2 rad spreads the TCP over 8.4 x 18.6 x 23.2 cm (5-95% widths)
+and up to 22 cm from the default pose -- several times the cube. Nothing collides: the
+lowest link stays at the base height out to +-0.4, and only past +-0.5 does the arm
+start dipping toward the table.
+
+Set generously on purpose. The curriculum cannot climb past what the policy can hold,
+so a high ceiling costs nothing and the mean level reports where the real limit is. The
+earlier ceiling of 0.1 was reached by both seeds with room to spare, which told us only
+that it was too low.
+"""
+
+ARM_INIT_NUM_LEVELS = 10
+"""Levels between "always the default pose" and ARM_INIT_MAX_RANGE, so 0.02 rad each."""
+
+
 OBJECT_POSITION_NOISE_STD = 0.02
 """Std (m) of the noise on the teacher's object-position observation.
 
@@ -268,10 +286,21 @@ class EventCfg:
         },
     )
 
-    # Deliberately no initial arm pose randomisation: a +-0.1 rad joint offset was the
-    # most damaging change in the 2026-10-06 ablation, taking final lifting_object from
-    # 8.952 to 0.121. See config/sandbox/SUMMARY.md before reintroducing it.
-
+    # Level 0 is the default pose every episode; the arm_init_level curriculum raises
+    # each environment's level as it proves it can still hold the cube. Switched on at
+    # full strength instead, this was the most damaging change in the 2026-10-06
+    # ablation -- final lifting_object 0.232 against a 12.754 baseline.
+    reset_robot_joints = EventTerm(
+        func=mdp.reset_arm_joints_by_level,
+        mode="reset",
+        params={
+            "max_range": ARM_INIT_MAX_RANGE,
+            "num_levels": ARM_INIT_NUM_LEVELS,
+            # arm joints only: the fingers are prismatic with 0.044 m of travel, so an
+            # offset in radians would just pin them to a limit
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["openarm_joint.*"]),
+        },
+    )
 
 @configclass
 class RewardsCfg:
@@ -361,6 +390,8 @@ class CurriculumCfg:
             "num_steps": SMOOTHNESS_PENALTY_ONSET,
         },
     )
+
+    arm_init_level = CurrTerm(func=mdp.arm_init_level)
 
     joint_vel = CurrTerm(
         func=mdp.modify_reward_weight,

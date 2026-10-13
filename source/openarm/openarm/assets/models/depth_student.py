@@ -47,7 +47,13 @@ def _mlp(in_dim: int, hidden_dims: list[int], activation: str) -> tuple[nn.Seque
 
 
 class DepthCNN(nn.Module):
-    """Three conv/max-pool stages followed by a 2-layer MLP (DextrAH-G F.3)."""
+    """Three conv/max-pool stages followed by a 2-layer MLP (DextrAH-G F.3).
+
+    One cell of the final 10x7 map covers 8 input pixels, about 6 cm at the cube's
+    distance, which looked like it might cap the object-position estimate at its
+    measured ~5 cm. Training with only two pools, halving that to 3 cm, moved placement
+    by a point for 3.7x the parameters, so it does not -- see config/sandbox/SUMMARY.md.
+    """
 
     def __init__(
         self,

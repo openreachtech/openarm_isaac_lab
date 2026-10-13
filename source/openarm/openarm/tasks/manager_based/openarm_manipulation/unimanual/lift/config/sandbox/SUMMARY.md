@@ -257,3 +257,60 @@ centimetres off.
 Note the spread between the two seeds: `fine_grained` 0.678 against 1.343, a factor of
 two, while `lifting_object` and `position_error` barely move. Grasping and carrying are
 stable; only the last few centimetres of placement swing with the seed.
+
+
+---
+
+## Does the depth CNN's pooling limit the student's placement? (2026-10-13)
+
+### Why
+
+Distilled from the method-3 teacher, the student inherits grasping almost exactly but
+loses placement, measured with every environment pinned to the top curriculum level:
+
+| level 10, 3072-4096 episodes | teacher | student |
+|---|---|---|
+| lifted | 95.0% | 93.0% |
+| placed < 10 cm | 94.8% | 55.7% |
+| placed < 5 cm | 70.8% | 12.8% |
+
+Its ``object_position`` loss settles near 0.0025, an RMS of about 5 cm, which caps how
+precisely it can place. The suspect since 2026-10-06 was the convolutional encoder:
+three max-pools take 80x60 down to a 10x7 map, so one cell covers 8 input pixels, about
+6 cm at the cube's distance -- the same order as the error. Max-pool keeps only that
+something responded in its window and not where, which is the wrong inductive bias for
+regressing a position.
+
+### Result
+
+Same teacher, same seed, same 1000 iterations, only the number of pooling stages changed
+(3 conv layers either way; the third pool is what goes).
+
+| | pool x3 | pool x2 |
+|---|---|---|
+| final map | 7x10 | 15x20 |
+| one cell, at the cube | 6.0 cm | 3.0 cm |
+| parameters | 697k | 2.58M |
+| lifted | 93.0% | 92.4% |
+| placed < 10 cm | 55.7% | 54.2% |
+| placed < 5 cm | 12.8% | 14.7% |
+| placed < 2 cm | 1.8% | 1.5% |
+
+**The hypothesis was wrong.** Halving the quantisation moved placement by about a point,
+inside the noise, for 3.7x the parameters. Pooling is not what caps the student.
+
+Worth noting the losses during training did favour pool x2 throughout the middle of the
+run (``object_position`` 0.0133 against 0.0220 at iteration 199, 0.0074 against 0.0095 at
+399) and then lost the lead by the end (0.0035 against 0.0025). Loss curves alone would
+have given the opposite answer to the success rates.
+
+Kept at three pools: identical performance, a third of the parameters, and the same
+architecture as DextrAH-G F.3.
+
+### What is left to try
+
+The remaining differences from the paper are depth resolution and camera FOV -- 80x60
+over 86 degrees against 160x120 over a D415's 65, a factor of 2.6 in angular resolution
+-- and time. The paper's student carries a GRU and states that concatenating the last n
+frames into a stateless model should work as well; ours sees one frame. Raising
+resolution costs 4x the rendering; frame stacking costs almost nothing.
