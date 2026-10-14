@@ -14,19 +14,15 @@
 
 """Distillation environments: the lift task seen through a depth camera.
 
-Difficulty is introduced in levels rather than all at once, the way Miki et al. stage
-student training: the student first learns the mapping under ideal perception, and only
-then has pieces of it taken away. Each level resumes from the one below it.
+``Arm-Lift-Cube-Student`` gives the student clean depth from a fixed camera: it learns
+to copy the teacher and to regress the object position before anything is taken away
+from it.
 
-  Student-Level1  clean depth, fixed camera pose. The student learns to copy the
-                  teacher and to regress the object position before anything is taken
-                  away from it.
-  Student-Level2  camera-pose perturbation (not yet implemented) -- robustness to the
-                  calibration error a real head-mounted camera will have.
-  Student-Level3+ the DextrAH-G F.1 depth augmentations: dropout, random pixels, stick
-                  artifacts, correlated and uncorrelated sensor noise.
-
-Levels above 1 do not exist yet; the numbering is open-ended on purpose.
+Difficulty is meant to be introduced a piece at a time rather than all at once, the way
+Miki et al. stage student training, with each stage resuming from the one before it.
+What is still missing is camera-pose perturbation -- robustness to the calibration error
+a real head-mounted camera will have -- and the DextrAH-G F.1 depth augmentations:
+dropout, random pixels, stick artifacts, correlated and uncorrelated sensor noise.
 
 The camera sits just below the arm base, looking straight ahead. That mirrors the
 intended hardware -- an arm on a quadruped's back with the depth camera in its head --
@@ -175,8 +171,8 @@ def _depth_camera_cfg() -> TiledCameraCfg:
 
 
 @configclass
-class RobotEnvCfgStudentLevel1(OpenArmCubeLiftEnvCfg):
-    """Level 1: the teacher's task with a clean, fixed depth camera added."""
+class RobotEnvCfgStudent(OpenArmCubeLiftEnvCfg):
+    """The teacher's task with a clean, fixed depth camera added."""
 
     observations: StudentObservationsCfg = StudentObservationsCfg()
 
@@ -188,8 +184,8 @@ class RobotEnvCfgStudentLevel1(OpenArmCubeLiftEnvCfg):
 
 
 @configclass
-class RobotPlayEnvCfgStudentLevel1(OpenArmCubeLiftEnvCfg_PLAY):
-    """Level 1 for play / visual inspection."""
+class RobotPlayEnvCfgStudent(OpenArmCubeLiftEnvCfg_PLAY):
+    """The student task for play / visual inspection."""
 
     observations: StudentObservationsCfg = StudentObservationsCfg()
 

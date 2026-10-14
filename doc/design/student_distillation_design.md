@@ -295,10 +295,9 @@ source/openarm/openarm/
 | 役割 | タスク ID |
 |---|---|
 | Teacher（既存） | `Arm-Lift-Cube` |
-| Student Level1 | `Arm-Lift-Cube-Student-Level1` |
-| Student Level2 | `Arm-Lift-Cube-Student-Level2` |
+| Student | `Arm-Lift-Cube-Student` |
 
-`rplay arm_lift_cube_student_phase1` で引けることを確認済み。
+`rplay arm_lift_cube_student` で引ける。
 
 ---
 
@@ -387,12 +386,12 @@ Student タスクはカメラを持つので **`--enable_cameras` が必須**。
 ```bash
 # Level1: teacher から蒸留
 python scripts/rsl_rl/train.py \
-  --task Arm-Lift-Cube-Student-Level1 --teacher_task Arm-Lift-Cube \
+  --task Arm-Lift-Cube-Student --teacher_task Arm-Lift-Cube \
   --headless --enable_cameras
 
 # 再開（teacher ではなく student 自身の run を読む）
 python scripts/rsl_rl/train.py \
-  --task Arm-Lift-Cube-Student-Level1 --resume --load_run <run> \
+  --task Arm-Lift-Cube-Student --resume --load_run <run> \
   --headless --enable_cameras
 ```
 
