@@ -80,3 +80,54 @@ def object_goal_distance(
     return (object.data.root_pos_w[:, 2] > minimal_height) * (
         1 - torch.tanh(distance / std)
     )
+
+
+##
+# Arm-Lift: height gates measured from where the object actually rests.
+##
+
+
+def lift_threshold(env: ManagerBasedRLEnv, margin: float) -> torch.Tensor:
+    """World z the object has to clear, per environment.
+
+    The cube task compared against a fixed 0.04 m, which only worked because there was one
+    object. With a mixed catalog an absolute gate asks different amounts of work from
+    different shapes -- an upright cylinder 5.5 cm tall rests at 2.75 cm and has 1.25 cm to
+    climb, while a 3 cm sphere rests at 1.5 cm and has 2.5 cm to climb. The policy would
+    learn to prefer tall objects and the per-shape success rates would not be comparable.
+
+    Measuring from the resting height instead asks every object for the same ``margin``.
+    """
+    from .events import TABLE_TOP_Z, object_catalog
+
+    return env.scene.env_origins[:, 2] + TABLE_TOP_Z + object_catalog(env).rest_pose_height + margin
+
+
+def object_is_lifted_relative(
+    env: ManagerBasedRLEnv,
+    margin: float,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """Reward lifting the object ``margin`` above where it was resting."""
+    obj: RigidObject = env.scene[object_cfg.name]
+    return (obj.data.root_pos_w[:, 2] > lift_threshold(env, margin)).float()
+
+
+def object_goal_distance_relative(
+    env: ManagerBasedRLEnv,
+    std: float,
+    margin: float,
+    command_name: str,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+) -> torch.Tensor:
+    """``object_goal_distance`` with the lift gate measured from the resting height."""
+    robot: RigidObject = env.scene[robot_cfg.name]
+    obj: RigidObject = env.scene[object_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    des_pos_w, _ = combine_frame_transforms(
+        robot.data.root_pos_w, robot.data.root_quat_w, command[:, :3]
+    )
+    distance = torch.norm(des_pos_w - obj.data.root_pos_w, dim=1)
+    lifted = obj.data.root_pos_w[:, 2] > lift_threshold(env, margin)
+    return lifted * (1 - torch.tanh(distance / std))

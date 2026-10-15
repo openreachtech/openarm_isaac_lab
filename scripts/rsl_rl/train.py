@@ -130,7 +130,10 @@ from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import openarm.tasks  # noqa: F401
-from openarm.assets.models.modules.runners import OpenArmDistillationRunner
+from openarm.assets.models.modules.runners import (
+    OpenArmDistillationRunner,
+    OpenArmOnPolicyRunner,
+)
 from openarm.utils.depth_capture import DepthCaptureWrapper
 
 # PLACEHOLDER: Extension template (do not remove this comment)
@@ -197,11 +200,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env = multi_agent_to_single_agent(env)
 
     # save resume path before creating a new log_dir
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+    if agent_cfg.resume or agent_cfg.class_name == "DistillationRunner":
         # A fresh distillation run bootstraps from a PPO teacher that was trained under a
         # different task name, so its checkpoint lives in that task's log directory, not
         # this run's. Resuming a distillation run reads from this run's directory as usual.
-        if agent_cfg.algorithm.class_name == "Distillation" and not agent_cfg.resume:
+        # Keyed on the runner rather than the algorithm class: every distillation run
+        # uses DistillationRunner, but the algorithm may be a project-specific subclass.
+        if agent_cfg.class_name == "DistillationRunner" and not agent_cfg.resume:
             teacher_task = args_cli.teacher_task if args_cli.teacher_task is not None else args_cli.task
             teacher_experiment = teacher_task.replace("-Play", "").lower().replace("-", "_")
             checkpoint_root_path = os.path.abspath(os.path.join("logs", "rsl_rl", teacher_experiment))
@@ -236,7 +241,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # create runner from rsl-rl
     if agent_cfg.class_name == "OnPolicyRunner":
-        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+        runner = OpenArmOnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
         # OpenArmDistillationRunner is DistillationRunner plus the registration hook that
         # makes the project's student / algorithm classes resolvable by name.
@@ -246,7 +251,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
-    if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
+    if agent_cfg.resume or agent_cfg.class_name == "DistillationRunner":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)

@@ -2,7 +2,7 @@
 
 Teacher（特権情報つき PPO）から、Depth 画像を入力とする Student へ方策蒸留するための設計。
 
-- 参考論文: [DextrAH-G](../papars/DextrAH-G_Pixels-to-Action_Dexterous_Arm-Hand_Grasping_with_Geometric_Fabrics.md) — Student アーキテクチャ（F.3）、損失（3.3）、Depth 拡張（F.1）
+- 参考論文: [DextrAH-G](../papers/DextrAH-G_Pixels-to-Action_Dexterous_Arm-Hand_Grasping_with_Geometric_Fabrics.md) — Student アーキテクチャ（F.3）、損失（3.3）、Depth 拡張（F.1）
 - 参考実装: `unitree_rl_lab` の `origin/feat/wall` — `Go2-v3-Level1`（teacher）/ `Go2-v3-Student-Level1`（student）
   - 注: ローカル `feat/wall` は 4 コミット古く Student タスクを含まない。`origin/feat/wall` を参照すること。
 

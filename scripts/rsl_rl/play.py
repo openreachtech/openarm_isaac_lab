@@ -87,7 +87,13 @@ from isaaclab_tasks.utils import get_checkpoint_path, load_cfg_from_registry
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import openarm.tasks  # noqa: F401
-from openarm.assets.models.modules.runners import OpenArmDistillationRunner
+from openarm.assets.models.rma_actor import RmaActorCritic
+from openarm.assets.models.rma_student_exporter import export_rma_student
+from openarm.assets.models.modules.rma_student_teacher import RmaStudentTeacher
+from openarm.assets.models.modules.runners import (
+    OpenArmDistillationRunner,
+    OpenArmOnPolicyRunner,
+)
 from openarm.assets.models.depth_student_exporter import export_depth_student
 from openarm.assets.models.modules.student_teacher import DepthStudentTeacher
 
@@ -157,7 +163,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     # load previously trained model
     if agent_cfg.class_name == "OnPolicyRunner":
-        runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+        runner = OpenArmOnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
         runner = OpenArmDistillationRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     else:
@@ -186,7 +192,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # export policy to onnx/jit
     export_model_dir = os.path.join(os.path.dirname(resume_path), "exported")
-    if isinstance(policy_nn, DepthStudentTeacher):
+    if isinstance(policy_nn, RmaActorCritic):
+        # Nothing to export. The RMA teacher's actor reads the privileged vector -- object
+        # mass, friction, exact dimensions -- which exists only in simulation, so a frozen
+        # graph of it could not be run on hardware. What gets deployed is the student, which
+        # predicts the same latent from depth and proprioception and carries its own copy of
+        # the policy half; that is exported from the Arm-Lift-Student task.
+        print("[INFO] RMA teacher: skipping ONNX/JIT export (the actor consumes privileged"
+              " observations and is not deployable).")
+    elif isinstance(policy_nn, RmaStudentTeacher):
+        # The deployable half is the student plus the teacher's policy, not the whole module.
+        export_rma_student(
+            policy_nn.student,
+            policy_nn.teacher.policy,
+            path=export_model_dir,
+            normalizer=normalizer,
+        )
+    elif isinstance(policy_nn, DepthStudentTeacher):
         # Isaac Lab's exporters index the actor as a Sequential; the depth student is not.
         export_depth_student(policy_nn.student, path=export_model_dir, normalizer=normalizer)
     else:

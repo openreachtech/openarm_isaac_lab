@@ -57,6 +57,34 @@ gym.register(
 )
 
 ##
+# Arm-Lift: the RMA teacher over a catalog of primitives.
+##
+
+gym.register(
+    id="Arm-Lift",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.arm_lift_env_cfg:ArmLiftEnvCfg",
+        "play_env_cfg_entry_point": f"{__name__}.arm_lift_env_cfg:ArmLiftEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_rma_cfg:ArmLiftRmaPPORunnerCfg",
+    },
+    disable_env_checker=True,
+)
+
+gym.register(
+    id="Arm-Lift-Student",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.arm_lift_student_env_cfg:ArmLiftStudentEnvCfg",
+        "play_env_cfg_entry_point": f"{__name__}.arm_lift_student_env_cfg:ArmLiftStudentEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_rma_distillation_cfg:ArmLiftStudentDistillationRunnerCfg"
+        ),
+    },
+    disable_env_checker=True,
+)
+
+##
 # Ablation sandbox (temporary -- see sandbox/__init__.py)
 ##
 
