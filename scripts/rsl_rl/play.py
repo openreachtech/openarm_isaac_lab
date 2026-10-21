@@ -228,7 +228,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             # agent stepping
             actions = policy(obs)
             # env stepping
-            obs, _, _, _ = env.step(actions)
+            obs, _, dones, _ = env.step(actions)
+            # A recurrent student keeps its hidden state across steps; clear it for the
+            # environments that just reset, as training does, or each new episode starts
+            # out remembering the last one. A no-op for feed-forward policies.
+            policy_nn.reset(dones)
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video

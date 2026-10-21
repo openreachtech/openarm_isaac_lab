@@ -31,3 +31,25 @@ gym.register(
     },
     disable_env_checker=True,
 )
+
+##
+# Depth student, distilled from the Arm-Place-Sphere teacher exactly as Arm-Lift-Student is:
+#   train.py --task Arm-Place-Sphere-Student --teacher_task Arm-Place-Sphere \
+#       --load_run <teacher run> --checkpoint <ckpt> --enable_cameras
+##
+
+gym.register(
+    id="Arm-Place-Sphere-Student",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.arm_place_sphere_student_env_cfg:ArmPlaceSphereStudentEnvCfg",
+        "play_env_cfg_entry_point": (
+            f"{__name__}.arm_place_sphere_student_env_cfg:ArmPlaceSphereStudentEnvCfg_PLAY"
+        ),
+        # Same student layout as Arm-Lift-Student, so the same distillation runner.
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_rma_distillation_cfg:ArmLiftStudentDistillationRunnerCfg"
+        ),
+    },
+    disable_env_checker=True,
+)

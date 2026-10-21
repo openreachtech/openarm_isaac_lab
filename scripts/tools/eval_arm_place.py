@@ -12,7 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Failure modes and per-condition success rates for ``Arm-Place-Sphere``.
+"""Failure modes and per-condition success rates for ``Arm-Place-Sphere`` and its student.
+
+    python scripts/tools/eval_arm_place.py --load_run <run> --checkpoint model_1999.pt [--clean_obs]
+    python scripts/tools/eval_arm_place.py --task Arm-Place-Sphere-Student --num_envs 256 \
+        --load_run <run> --checkpoint model_1999.pt
+
+``--clean_obs`` switches off the teacher's object-position noise. The student's observations
+are clean already, so compare a student against a teacher measured with it.
 
 The training log reports one success rate. This sorts every failed episode into the one
 place it went wrong, then breaks success down by the things the reset randomised: the
@@ -50,9 +57,17 @@ parser.add_argument("--episodes", type=int, default=12, help="Episodes per envir
 parser.add_argument("--arm_init_level", type=int, default=10)
 parser.add_argument("--load_run", type=str, default=".*")
 parser.add_argument("--checkpoint", type=str, default="model_.*.pt")
+parser.add_argument(
+    "--clean_obs",
+    action="store_true",
+    help="Turn off the teacher's object-position noise, to compare it with a student on equal terms.",
+)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
 args_cli.headless = True
+# The student task carries a depth camera, which Isaac Lab refuses to spawn without this.
+if "student" in args_cli.task.lower():
+    args_cli.enable_cameras = True
 
 app = AppLauncher(args_cli).app
 
@@ -67,7 +82,7 @@ from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.parse_cfg import load_cfg_from_registry, parse_env_cfg
 
-from openarm.assets.models.modules.runners import OpenArmOnPolicyRunner
+from openarm.assets.models.modules.runners import OpenArmDistillationRunner, OpenArmOnPolicyRunner
 from openarm.tasks.manager_based.openarm_manipulation.unimanual.lift.mdp.events import object_catalog
 from openarm.tasks.manager_based.openarm_manipulation.unimanual.lift.mdp.rewards import lift_threshold
 from openarm.tasks.manager_based.openarm_manipulation.unimanual.place.mdp.rewards import (
@@ -97,6 +112,8 @@ def main() -> None:
     env_cfg = parse_env_cfg(args_cli.task, device="cuda:0", num_envs=args_cli.num_envs)
     env_cfg.events.reset_robot_joints.params["fixed_level"] = args_cli.arm_init_level
     env_cfg.curriculum.arm_init_level = None
+    if args_cli.clean_obs:
+        env_cfg.observations.policy.enable_corruption = False
 
     agent_cfg = load_cfg_from_registry(args_cli.task, "rsl_rl_cfg_entry_point")
     experiment = agent_cfg.experiment_name or args_cli.task.replace("-Play", "").lower().replace("-", "_")
@@ -108,9 +125,13 @@ def main() -> None:
 
     env = gym.make(args_cli.task, cfg=env_cfg)
     env = RslRlVecEnvWrapper(env, clip_actions=None)
-    runner = OpenArmOnPolicyRunner(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+    runner_cls = (
+        OpenArmDistillationRunner if agent_cfg.class_name == "DistillationRunner" else OpenArmOnPolicyRunner
+    )
+    runner = runner_cls(env, agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
     runner.load(checkpoint)
     policy = runner.get_inference_policy(device=env.unwrapped.device)
+    policy_module = runner.alg.policy
 
     u = env.unwrapped
     device = u.device
@@ -163,6 +184,10 @@ def main() -> None:
     with torch.inference_mode():
         while len(rows) < target:
             obs, _, dones, _ = env.step(policy(obs))
+            # The student is recurrent. Training clears its hidden state for the environments
+            # that just reset, so evaluation has to as well, or every episode after the first
+            # starts out remembering the previous one. A no-op for the feed-forward teacher.
+            policy_module.reset(dones)
 
             lifted = obj.data.root_pos_w[:, 2] > lift_threshold(u, margin)
             in_bin = object_in_bin(u)
@@ -239,7 +264,8 @@ def classify(f: dict, ever_lifted: bool, ever_in_bin: bool) -> str:
 def report(rows: list[dict]) -> None:
     total = len(rows)
     ok = sum(r["outcome"] == "success" for r in rows)
-    print(f"\n[eval] {total} episodes, arm_init_level {args_cli.arm_init_level}")
+    print(f"\n[eval] {total} episodes, arm_init_level {args_cli.arm_init_level}"
+          + (", clean observations" if args_cli.clean_obs else ""))
     print(f"[eval] success {ok / total * 100:.2f}%  ({total - ok} failures)")
 
     times = sorted(r["t_success"] for r in rows if r["t_success"] is not None)

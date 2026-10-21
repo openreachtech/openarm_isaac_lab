@@ -4,7 +4,7 @@
 
 - 移植元: `ManiSkill/mani_skill/envs/tasks/tabletop/place_sphere.py`（ManiSkill3 側も中身は同一）
 - 先行タスク: `Arm-Lift` — ロボット、基部高さ、腕アクション、連続グリッパ、RMA の観測構成、初期姿勢カリキュラムを継承する
-- タスク ID: **`Arm-Place-Sphere`**（teacher）。Student は Arm-Lift と同じ手順で後から作る
+- タスク ID: **`Arm-Place-Sphere`**（teacher）/ **`Arm-Place-Sphere-Student`**（深度カメラ、§13）
 
 ---
 
@@ -195,6 +195,7 @@ Isaac Lab は報酬を項の**加算**で計算するので、ManiSkill の「�
 |---|---|
 | `unimanual/place/__init__.py`, `place/config/__init__.py` | 新規。`Arm-Place-Sphere` を登録（PLAY は `play_env_cfg_entry_point`） |
 | `place/config/arm_place_sphere_env_cfg.py` | 新規。`ArmPlaceSphereEnvCfg(ArmLiftEnvCfg)` と `_PLAY` |
+| `place/config/arm_place_sphere_student_env_cfg.py` | 新規。`ArmPlaceSphereStudentEnvCfg` と `_PLAY`（§13） |
 | `place/bin_asset.py` | 新規。トレイの USD を pxr で生成し、キャッシュする |
 | `place/mdp/__init__.py` | 新規。lift の mdp を再エクスポートし、以下を追加 |
 | `place/mdp/commands.py` | 新規。`BinTargetCommand(+Cfg)` |
@@ -203,7 +204,8 @@ Isaac Lab は報酬を項の**加算**で計算するので、ManiSkill の「�
 | `place/mdp/curriculums.py` | 新規。`arm_init_level_place`、および成功率をログに出す `episode_place_success` |
 | `lift/object_catalog.py` | 追加。`build_sphere_catalog(radius)` と、名前で catalog を選ぶ `build_object_catalog(name)` |
 | `lift/mdp/events.py` | 変更。`object_catalog()` が `env.cfg.object_catalog`（名前の文字列）を読むようにした。設定がなければ `"primitives"` になるので、Arm-Lift の挙動は変わらない |
-| `scripts/tools/eval_arm_place.py` | 新規。失敗を種類ごとに分類し、配置・方向・質量・摩擦の区間ごとに成功率を集計する |
+| `scripts/tools/eval_arm_place.py` | 新規。失敗を種類ごとに分類し、配置・方向・質量・摩擦の区間ごとに成功率を集計する。student にも対応し、`--clean_obs` で teacher の観測ノイズを切れる |
+| `scripts/rsl_rl/play.py` | 変更。エピソードが終わった環境について `policy_nn.reset(dones)` を呼ぶ（§13） |
 
 ---
 
@@ -249,7 +251,49 @@ Isaac Lab は報酬を項の**加算**で計算するので、ManiSkill の「�
 
 ---
 
-## 13. リスク（実装前に挙げたもの）と、その結果
+## 13. Student（`Arm-Place-Sphere-Student`）
+
+構成は Arm-Lift-Student とまったく同じ（`doc/design/arm_lift_rma_design.md` §4、§11）。
+- place の teacher は Arm-Lift の観測クラスをそのまま継承しているので、次のものを無変更で流用した。
+  - `ArmLiftStudentObservationsCfg`（policy / state / privileged / aux の 4 つの観測グループ）
+  - 深度カメラ
+  - `ArmLiftStudentDistillationRunnerCfg`
+- 新しく書いたのは、env 設定とタスク登録だけ。
+
+```bash
+python scripts/rsl_rl/train.py --task Arm-Place-Sphere-Student --teacher_task Arm-Place-Sphere \
+    --load_run 2026-10-21_14-20-38 --checkpoint model_1999.pt --enable_cameras --headless
+```
+
+### 測定結果（2026-10-21、`arm_place_sphere_student/2026-10-21_16-45-49/model_1999.pt`）
+
+128 環境、2000 iteration、約 45 分。
+
+| iteration | 0 | 400 | 1200 | 1900 |
+|---|---|---|---|---|
+| behavior loss | 1.650 | 0.037 | 0.020 | 0.014 |
+| latent loss | 0.180 | 0.022 | 0.017 | 0.013 |
+
+400 iteration でほぼ収束した。Arm-Lift-Student の最終値（behavior 0.104、latent 0.030）より低い。
+
+| | エピソード数 | 成功率 | 落下 |
+|---|---|---|---|
+| teacher（ノイズあり、学習時と同じ条件） | 6000 | 98.72% | 1.13% |
+| teacher（`--clean_obs`） | 6000 | 98.98% | 0.88% |
+| **student** | 3072 | **99.09%** | 0.72% |
+
+- 条件を揃えた比較（teacher もノイズなし）では、teacher と student の差は誤差の範囲（±0.2 ポイント程度）に収まった。蒸留による性能の低下は見られない。
+- Arm-Lift-Student は teacher より −3.0 ポイントだった。物体が球 1 種類なので、latent が表すべきものが質量と摩擦くらいしかないことが効いていると考えられる。
+- 残りの失敗の傾向も teacher と同じ。ビンの y が +0.09 以上のときに 97.4%（teacher は 98.0%）。
+
+### 注意
+
+- **知覚は理想的な設定。** `state` には物体の位置とビンの目標位置が正確な値で入っている。student が深度画像から推定しているのは、latent だけ。保存した深度画像（`depth_capture/`）では、ビンはほとんど見えない（壁の高さ 1.5 cm、80×60 ピクセル）。位置にノイズを入れる段階に進むなら、ここが最初の壁になる。
+- **hidden state のリセット。** student は GRU で、学習中は環境がリセットされるたびにその環境の hidden state をクリアしている。一方、`play.py` と `eval_arm_lift.py` はクリアしていなかった。今回、`play.py` と `eval_arm_place.py` にはリセットを入れた。`eval_arm_lift.py` は未修正のままなので、`arm_lift_rma_design.md` §11 の Arm-Lift-Student の 85.2% は、前のエピソードの記憶を引き継いだ状態で測った値の可能性がある（未検証）。
+
+---
+
+## 14. リスク（実装前に挙げたもの）と、その結果
 
 1. **押し込みで成功してしまう抜け道**：壁の上端（1.5 cm）は球の半径（2 cm）より低いので、掴まずに転がして押し込める可能性がある。→ **起きなかった。** 6000 エピソード中、一度も持ち上げずに成功したのは 0 件。
 2. **指と壁の干渉**：離す瞬間に指が壁に当たり、球が弾かれる可能性がある。PLAY で目視確認し、必要なら `BIN_INNER_HALF` を 0.025 m にする。
