@@ -249,7 +249,10 @@ def _make_capsule(rng: np.random.Generator) -> CatalogEntry:
 
 
 def _make_sphere(rng: np.random.Generator) -> CatalogEntry:
-    radius = float(rng.uniform(*SPHERE_RADIUS))
+    return _sphere_entry(float(rng.uniform(*SPHERE_RADIUS)))
+
+
+def _sphere_entry(radius: float) -> CatalogEntry:
     return CatalogEntry(
         category="sphere",
         spawn=sim_utils.SphereCfg(radius=radius, visual_material=_colour("sphere"), **_shape_kwargs()),
@@ -309,6 +312,27 @@ def build_catalog(seed: int = CATALOG_SEED, per_category: int = PER_CATEGORY) ->
         for name in CATEGORIES:
             catalog.append(per_cat[name][i])
     return catalog
+
+
+def build_sphere_catalog(radius: float = 0.02) -> list[CatalogEntry]:
+    """A single sphere of fixed radius, for ``Arm-Place-Sphere``.
+
+    A one-entry catalog rather than a bare ``SphereCfg``, so that the buffers, the relative
+    lift gate, the physics randomisation and the privileged observations all keep working
+    unchanged -- and the privileged vector keeps the layout the RMA model slices by.
+    """
+    return [_sphere_entry(radius)]
+
+
+CATALOGS = {
+    "primitives": build_catalog,
+    "sphere": build_sphere_catalog,
+}
+"""Catalogs an environment can name through ``env.cfg.object_catalog``."""
+
+
+def build_object_catalog(name: str) -> list[CatalogEntry]:
+    return CATALOGS[name]()
 
 
 def catalog_spawn_cfg(catalog: list[CatalogEntry]) -> sim_utils.MultiAssetSpawnerCfg:

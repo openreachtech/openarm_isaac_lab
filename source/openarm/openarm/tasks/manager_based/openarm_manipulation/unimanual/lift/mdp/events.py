@@ -191,9 +191,10 @@ def object_catalog(
 
     import isaaclab.sim as sim_utils
 
-    from ..object_catalog import build_catalog
+    from ..object_catalog import build_object_catalog
 
-    catalog = build_catalog()
+    # The env cfg names its catalog; Arm-Lift does not set one and gets the primitives.
+    catalog = build_object_catalog(getattr(env.cfg, "object_catalog", "primitives"))
     asset = env.scene[asset_cfg.name]
 
     prim_paths = sim_utils.find_matching_prim_paths(asset.cfg.prim_path)
