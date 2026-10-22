@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 from isaaclab.managers import SceneEntityCfg
 
 from ...lift.mdp.events import TABLE_TOP_Z
-from ..bin_asset import BIN_FLOOR_HALF_THICKNESS
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
@@ -82,6 +81,6 @@ def reset_bin_near_object(
 
     pose = torch.zeros(num, 7, device=env.device)
     pose[:, :2] = origins[:, :2] + bin_xy
-    pose[:, 2] = origins[:, 2] + TABLE_TOP_Z + BIN_FLOOR_HALF_THICKNESS
+    pose[:, 2] = origins[:, 2] + TABLE_TOP_Z + env.cfg.bin_geometry.floor_half_thickness
     pose[:, 3] = 1.0
     bin_asset.write_root_pose_to_sim(pose, env_ids=env_ids)

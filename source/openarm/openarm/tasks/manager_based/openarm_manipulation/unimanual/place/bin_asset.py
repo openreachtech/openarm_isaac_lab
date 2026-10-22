@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The bin for ``Arm-Place-Sphere``: a floor plate and four low walls, as one rigid body.
-
-Dimensions are ManiSkill's ``PlaceSphere-v1`` (``_build_bin``): a 4 cm square pocket, walls
-5 mm thick and 1 cm tall standing on a 5 mm floor, so a 2 cm sphere fits it exactly.
+"""The bin for ``Arm-Place-Sphere``: a floor plate and four walls, as one rigid body.
 
 Isaac Lab's shape spawners make one shape per prim, and a rigid body with five colliders is
 what is needed here -- five separate bodies would each have to be placed at reset and could
 drift apart. So the USD is written out with pxr and spawned through ``UsdFileCfg``.
+
+The geometry is a ``BinCfg`` on the env cfg (``env.cfg.bin_geometry``), read by the spawn,
+the reset event and every bin predicate, so a variant task changes the bin in one place.
 """
 
 from __future__ import annotations
@@ -27,38 +27,61 @@ from __future__ import annotations
 import os
 import tempfile
 
-BIN_INNER_HALF = 0.02
-"""Half the pocket's inner side. Equal to the sphere radius, as in ManiSkill.
+from isaaclab.utils import configclass
 
-The first thing to widen (to 0.025, 5 mm of play) if placement precision will not come up.
-"""
 
-BIN_WALL_THICKNESS = 0.005
-BIN_WALL_HEIGHT = 0.01
-BIN_FLOOR_HALF_THICKNESS = 0.0025
-"""The body's origin is the centre of the floor plate, so its top is this far above it."""
+@configclass
+class BinCfg:
+    """Bin dimensions. The body's origin is the centre of the floor plate."""
 
-BIN_OUTER_HALF = BIN_INNER_HALF + BIN_WALL_THICKNESS
+    inner_half: float = 0.02
+    """Half the pocket's inner side."""
+
+    wall_thickness: float = 0.005
+    wall_height: float = 0.01
+    """Measured from the floor's top surface."""
+
+    floor_half_thickness: float = 0.0025
+
+    @property
+    def outer_half(self) -> float:
+        return self.inner_half + self.wall_thickness
+
+    @property
+    def rim_height(self) -> float:
+        """Height of the wall tops above the body origin."""
+        return self.floor_half_thickness + self.wall_height
+
+
+SHALLOW_BIN = BinCfg()
+"""ManiSkill's ``PlaceSphere-v1`` (``_build_bin``): a 4 cm square pocket, walls 5 mm thick
+and 1 cm tall standing on a 5 mm floor, so a 2 cm sphere fits it exactly."""
+
+DEEP_BIN = BinCfg(inner_half=0.03, wall_height=0.08)
+"""Walls twice the sphere's diameter and a pocket 1.5x as wide, so the sphere has 1 cm of
+play each way. Too deep to lower a gripped sphere into without the fingers meeting the
+walls, so it has to be carried over the rim and let go of from above."""
 
 BIN_COLOUR = (0.55, 0.45, 0.35)
 
 
-def _boxes() -> list[tuple[str, tuple[float, float, float], tuple[float, float, float]]]:
+def _boxes(cfg: BinCfg) -> list[tuple[str, tuple[float, float, float], tuple[float, float, float]]]:
     """``(name, centre, half-size)`` of each plate, in the body frame."""
-    wall_offset = BIN_INNER_HALF + BIN_WALL_THICKNESS / 2
-    wall_z = BIN_FLOOR_HALF_THICKNESS + BIN_WALL_HEIGHT / 2
-    wall_half = BIN_WALL_HEIGHT / 2
-    thin = BIN_WALL_THICKNESS / 2
+    wall_offset = cfg.inner_half + cfg.wall_thickness / 2
+    wall_z = cfg.floor_half_thickness + cfg.wall_height / 2
+    wall_half = cfg.wall_height / 2
+    thin = cfg.wall_thickness / 2
+    outer = cfg.outer_half
     return [
-        ("floor", (0.0, 0.0, 0.0), (BIN_OUTER_HALF, BIN_OUTER_HALF, BIN_FLOOR_HALF_THICKNESS)),
-        ("wall_px", (wall_offset, 0.0, wall_z), (thin, BIN_OUTER_HALF, wall_half)),
-        ("wall_nx", (-wall_offset, 0.0, wall_z), (thin, BIN_OUTER_HALF, wall_half)),
-        ("wall_py", (0.0, wall_offset, wall_z), (BIN_OUTER_HALF, thin, wall_half)),
-        ("wall_ny", (0.0, -wall_offset, wall_z), (BIN_OUTER_HALF, thin, wall_half)),
+        ("floor", (0.0, 0.0, 0.0), (outer, outer, cfg.floor_half_thickness)),
+        ("wall_px", (wall_offset, 0.0, wall_z), (thin, outer, wall_half)),
+        ("wall_nx", (-wall_offset, 0.0, wall_z), (thin, outer, wall_half)),
+        ("wall_py", (0.0, wall_offset, wall_z), (outer, thin, wall_half)),
+        ("wall_ny", (0.0, -wall_offset, wall_z), (outer, thin, wall_half)),
     ]
 
 
-def bin_usd_path() -> str:
+def bin_usd_path(cfg: BinCfg) -> str:
     """Write the bin's USD if it is not there yet, and return its path.
 
     Cached under the system temp directory with the dimensions in the name, so a change to
@@ -71,7 +94,7 @@ def bin_usd_path() -> str:
     """
     tag = "_".join(
         f"{v * 1000:g}"
-        for v in (BIN_INNER_HALF, BIN_WALL_THICKNESS, BIN_WALL_HEIGHT, BIN_FLOOR_HALF_THICKNESS)
+        for v in (cfg.inner_half, cfg.wall_thickness, cfg.wall_height, cfg.floor_half_thickness)
     )
     directory = os.path.join(tempfile.gettempdir(), "openarm")
     path = os.path.join(directory, f"place_bin_{tag}.usda")
@@ -93,7 +116,7 @@ def bin_usd_path() -> str:
     # computing one from five colliders and warning about it.
     UsdPhysics.MassAPI.Apply(root.GetPrim()).CreateMassAttr(0.1)
 
-    for name, centre, half in _boxes():
+    for name, centre, half in _boxes(cfg):
         cube = UsdGeom.Cube.Define(stage, f"/Bin/{name}")
         cube.CreateSizeAttr(1.0)
         xform = UsdGeom.XformCommonAPI(cube)

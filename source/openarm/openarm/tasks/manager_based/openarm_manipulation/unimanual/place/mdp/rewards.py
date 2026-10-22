@@ -29,15 +29,16 @@ from isaaclab.managers import SceneEntityCfg
 
 from ...lift.mdp.events import object_catalog
 from ...lift.mdp.rewards import lift_threshold
-from ..bin_asset import BIN_FLOOR_HALF_THICKNESS, BIN_OUTER_HALF
+from ..bin_asset import BinCfg
 
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 IN_BIN_XY_TOL = 0.005
 IN_BIN_Z_TOL = 0.005
-"""ManiSkill's 5 mm on both. The pocket is as wide as the sphere, so the xy check mostly
-confirms that it is in the pocket rather than resting on a wall."""
+"""ManiSkill's 5 mm on both. In xy it is measured from the square the object's centre can
+reach on the floor, so it means "in the pocket" whatever the pocket's play -- and in
+ManiSkill's own bin, where the play is zero, it is exactly ManiSkill's 5 mm from the centre."""
 
 GRASP_MIN_FORCE = 0.5
 """Newtons on *each* finger, as ManiSkill's ``is_grasping``. Its 85 deg direction check is
@@ -51,6 +52,10 @@ STATIC_ANG_VEL = 0.5
 FINGER_OPEN = 0.044
 
 
+def bin_geometry(env: ManagerBasedRLEnv) -> BinCfg:
+    return env.cfg.bin_geometry
+
+
 def place_target_w(
     env: ManagerBasedRLEnv, bin_cfg: SceneEntityCfg = SceneEntityCfg("bin")
 ) -> torch.Tensor:
@@ -61,7 +66,7 @@ def place_target_w(
     """
     bin_pos = env.scene[bin_cfg.name].data.root_pos_w
     target = bin_pos.clone()
-    target[:, 2] += BIN_FLOOR_HALF_THICKNESS + object_catalog(env).rest_pose_height
+    target[:, 2] += bin_geometry(env).floor_half_thickness + object_catalog(env).rest_pose_height
     return target
 
 
@@ -70,7 +75,11 @@ def object_in_bin(
 ) -> torch.Tensor:
     """The object is resting on the bin floor, within the pocket."""
     offset = env.scene[object_cfg.name].data.root_pos_w - place_target_w(env)
-    return (torch.norm(offset[:, :2], dim=1) <= IN_BIN_XY_TOL) & (offset[:, 2].abs() <= IN_BIN_Z_TOL)
+    # How far the centre can move from the middle before the object touches a wall.
+    half_width = object_catalog(env).half_extent[:, :2].max(dim=1).values
+    play = (bin_geometry(env).inner_half - half_width).clamp(min=0.0)
+    outside = (offset[:, :2].abs() - play.unsqueeze(-1)).clamp(min=0.0)
+    return (torch.norm(outside, dim=1) <= IN_BIN_XY_TOL) & (offset[:, 2].abs() <= IN_BIN_Z_TOL)
 
 
 def object_over_bin(
@@ -84,7 +93,7 @@ def object_over_bin(
     only ever holds while the object is carried over the bin or lowered into it.
     """
     offset = env.scene[object_cfg.name].data.root_pos_w - env.scene[bin_cfg.name].data.root_pos_w
-    return (offset[:, :2].abs() <= BIN_OUTER_HALF).all(dim=1)
+    return (offset[:, :2].abs() <= bin_geometry(env).outer_half).all(dim=1)
 
 
 FINGER_OBJECT_SENSORS = ("left_finger_object_contact", "right_finger_object_contact")
@@ -150,6 +159,38 @@ def place_tracking(
     distance = torch.norm(place_target_w(env) - obj.data.root_pos_w, dim=1)
     lifted = obj.data.root_pos_w[:, 2] > lift_threshold(env, margin)
     return (lifted | object_over_bin(env)) * (1 - torch.tanh(distance / std))
+
+
+RIM_CLEARANCE = 0.02
+"""How far above the rim the object's lowest point is aimed when carried over it."""
+
+
+def place_tracking_over_rim(
+    env: ManagerBasedRLEnv,
+    std: float,
+    margin: float,
+    clearance: float = RIM_CLEARANCE,
+    object_cfg: SceneEntityCfg = SceneEntityCfg("object"),
+    bin_cfg: SceneEntityCfg = SceneEntityCfg("bin"),
+) -> torch.Tensor:
+    """``place_tracking`` for a bin too deep to aim straight at the floor.
+
+    With walls twice the sphere's height, the straight line from a lifted sphere to the floor
+    target runs through a wall, and shaping along it pushes the sphere into the wall's side.
+    So the target is instead a point ``clearance`` above the rim, and once the object is over
+    the bin the term pays in full -- full rather than switching to the floor target, because
+    the floor is further from a sphere at rim height than the waypoint was, and the reward
+    would drop at the moment of arriving. ``place_tracking_fine`` keeps aiming at the floor
+    and does the pulling down.
+    """
+    obj: RigidObject = env.scene[object_cfg.name]
+    waypoint = env.scene[bin_cfg.name].data.root_pos_w.clone()
+    rest_height = object_catalog(env).rest_pose_height
+    waypoint[:, 2] += bin_geometry(env).rim_height + rest_height + clearance
+    distance = torch.norm(waypoint - obj.data.root_pos_w, dim=1)
+    lifted = obj.data.root_pos_w[:, 2] > lift_threshold(env, margin)
+    approach = lifted * (1 - torch.tanh(distance / std))
+    return torch.where(object_over_bin(env), torch.ones_like(approach), approach)
 
 
 def object_in_bin_reward(env: ManagerBasedRLEnv) -> torch.Tensor:

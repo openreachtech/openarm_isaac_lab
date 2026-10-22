@@ -41,7 +41,7 @@ from ...lift.lift_env_cfg import ARM_INIT_NUM_LEVELS, CurriculumCfg
 from ...lift.mdp.events import TABLE_TOP_Z
 from ...lift.object_catalog import build_object_catalog, catalog_spawn_cfg
 from .. import mdp
-from ..bin_asset import BIN_FLOOR_HALF_THICKNESS, bin_usd_path
+from ..bin_asset import DEEP_BIN, SHALLOW_BIN, BinCfg, bin_usd_path
 
 OBJECT_CATALOG = "sphere"
 """One 2 cm sphere, as ManiSkill. See ``build_sphere_catalog``."""
@@ -167,6 +167,9 @@ class ArmPlaceSphereEnvCfg(ArmLiftEnvCfg):
     object_catalog: str = OBJECT_CATALOG
     """Read by ``object_catalog()`` in lift/mdp/events.py."""
 
+    bin_geometry: BinCfg = SHALLOW_BIN
+    """Read by the bin's spawn, its reset event and every bin predicate."""
+
     events: PlaceEventCfg = PlaceEventCfg()
     rewards: PlaceRewardsCfg = PlaceRewardsCfg()
     curriculum: PlaceCurriculumCfg = PlaceCurriculumCfg()
@@ -187,10 +190,10 @@ class ArmPlaceSphereEnvCfg(ArmLiftEnvCfg):
         self.scene.bin = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/Bin",
             init_state=RigidObjectCfg.InitialStateCfg(
-                pos=[0.4, 0.2, TABLE_TOP_Z + BIN_FLOOR_HALF_THICKNESS], rot=[1, 0, 0, 0]
+                pos=[0.4, 0.2, TABLE_TOP_Z + self.bin_geometry.floor_half_thickness], rot=[1, 0, 0, 0]
             ),
             spawn=sim_utils.UsdFileCfg(
-                usd_path=bin_usd_path(),
+                usd_path=bin_usd_path(self.bin_geometry),
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
                     kinematic_enabled=True, disable_gravity=True
                 ),
@@ -223,5 +226,38 @@ class ArmPlaceSphereEnvCfg_PLAY(ArmPlaceSphereEnvCfg):
         self.scene.env_spacing = 2.5
         self.observations.policy.enable_corruption = False
         # As Arm-Lift's PLAY: show the level the policy was trained up to.
+        self.events.reset_robot_joints.params["fixed_level"] = ARM_INIT_NUM_LEVELS
+        self.curriculum.arm_init_level = None
+
+
+##
+# Deep bin
+##
+
+
+@configclass
+class ArmPlaceSphereDeepEnvCfg(ArmPlaceSphereEnvCfg):
+    """Walls twice the sphere's diameter, pocket 1.5x as wide -- see ``DEEP_BIN``.
+
+    The only reward change is the coarse tracking term, which aims over the rim instead of
+    through the wall. Everything else, the weights included, is the shallow task's.
+    """
+
+    bin_geometry: BinCfg = DEEP_BIN
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.rewards.place_tracking = RewTerm(
+            func=mdp.place_tracking_over_rim, params={"std": 0.3, "margin": LIFT_MARGIN}, weight=16.0
+        )
+
+
+@configclass
+class ArmPlaceSphereDeepEnvCfg_PLAY(ArmPlaceSphereDeepEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
         self.events.reset_robot_joints.params["fixed_level"] = ARM_INIT_NUM_LEVELS
         self.curriculum.arm_init_level = None

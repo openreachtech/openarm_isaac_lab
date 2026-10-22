@@ -4,7 +4,7 @@
 
 - 移植元: `ManiSkill/mani_skill/envs/tasks/tabletop/place_sphere.py`（ManiSkill3 側も中身は同一）
 - 先行タスク: `Arm-Lift` — ロボット、基部高さ、腕アクション、連続グリッパ、RMA の観測構成、初期姿勢カリキュラムを継承する
-- タスク ID: **`Arm-Place-Sphere`**（teacher）/ **`Arm-Place-Sphere-Student`**（深度カメラ、§13）
+- タスク ID: **`Arm-Place-Sphere`**（teacher）/ **`Arm-Place-Sphere-Student`**（深度カメラ、§13）/ **`Arm-Place-Sphere-Deep`**（深いビン、§14）
 
 ---
 
@@ -46,7 +46,7 @@
 ### ビン（トレイ）
 
 - **寸法は ManiSkill と同じ**（内寸 4 cm、壁の高さ 1 cm、壁と底の厚さ 5 mm）。
-- 内寸を `BIN_INNER_HALF` として定数にしておく。精度が足りない場合は、まず 0.025 m（隙間 5 mm）に広げる。
+- 寸法は `BinCfg`（`place/bin_asset.py`）で表し、env 設定の `bin_geometry` に持たせる。生成、配置、判定はすべてここを読む。ManiSkill と同じ寸法が `SHALLOW_BIN`、深い変種が `DEEP_BIN`（§14）。
 - Isaac Lab のスポナーは 1 プリムに 1 形状しか作れない。そのため、**底板と壁 4 枚を子 Cube に持つ USD を pxr で生成**し、`UsdFileCfg` で 1 つの kinematic `RigidObject` として読み込む。
   - 生成した USD は寸法をファイル名に含めてキャッシュする。
   - 剛体のプロパティは `RigidBodyPropertiesCfg(kinematic_enabled=True)` にする。
@@ -194,9 +194,9 @@ Isaac Lab は報酬を項の**加算**で計算するので、ManiSkill の「�
 | ファイル | 内容 |
 |---|---|
 | `unimanual/place/__init__.py`, `place/config/__init__.py` | 新規。`Arm-Place-Sphere` を登録（PLAY は `play_env_cfg_entry_point`） |
-| `place/config/arm_place_sphere_env_cfg.py` | 新規。`ArmPlaceSphereEnvCfg(ArmLiftEnvCfg)` と `_PLAY` |
+| `place/config/arm_place_sphere_env_cfg.py` | 新規。`ArmPlaceSphereEnvCfg(ArmLiftEnvCfg)`、`ArmPlaceSphereDeepEnvCfg` とそれぞれの `_PLAY` |
 | `place/config/arm_place_sphere_student_env_cfg.py` | 新規。`ArmPlaceSphereStudentEnvCfg` と `_PLAY`（§13） |
-| `place/bin_asset.py` | 新規。トレイの USD を pxr で生成し、キャッシュする |
+| `place/bin_asset.py` | 新規。`BinCfg`（寸法）、`SHALLOW_BIN` / `DEEP_BIN`、トレイの USD を pxr で生成してキャッシュする |
 | `place/mdp/__init__.py` | 新規。lift の mdp を再エクスポートし、以下を追加 |
 | `place/mdp/commands.py` | 新規。`BinTargetCommand(+Cfg)` |
 | `place/mdp/events.py` | 新規。`reset_bin_near_object` |
@@ -293,10 +293,64 @@ python scripts/rsl_rl/train.py --task Arm-Place-Sphere-Student --teacher_task Ar
 
 ---
 
-## 14. リスク（実装前に挙げたもの）と、その結果
+## 14. 深いビン（`Arm-Place-Sphere-Deep`）
+
+`DEEP_BIN` を使う。壁の高さは 8 cm（球の直径の 2 倍）、内寸は 6 cm 四方（Shallow の 1.5 倍）で、球は片側 1 cm ずれることができる。
+- 掴んだ球をビンの中まで下ろそうとすると、指が壁に当たる。そのため、縁の上まで運んで、そこから離して落とす必要がある。
+- 配置、重み、カリキュラム、runner は Shallow と同じ。
+
+### Shallow から変えたもの
+
+**`place_tracking` → `place_tracking_over_rim`（Deep だけ）。**
+- Shallow の誘導は、球からビン底の目標点への直線距離。壁が 8 cm あると、この直線は壁を貫くので、球を壁の側面に押し付ける方向に誘導してしまう。
+- そこで Deep では、ビンの真上に来るまでは「縁の 2 cm 上の点」（`RIM_CLEARANCE`）を目標にし、真上に来たらこの項を満点にする。
+- 真上に来たときに目標を底へ切り替えないのは、縁の高さにある球から見ると、底は経由点より遠いため。切り替えると、到着した瞬間に報酬が下がってしまう。
+- 底へ下ろす誘導は、`place_tracking_fine`（目標は底のまま）が担当する。
+
+**`object_in_bin` の xy 判定を一般化した（両方に効く）。**
+- 「球の中心が取れる範囲（`inner_half` − 物体の水平方向の半寸法）から 5 mm 以内」にした。
+- Shallow ではこの範囲が 0 なので、従来の「中心から 5 mm 以内」と同じになる。球を落として確認した結果、in_bin と success の判定は変わらなかった。
+
+### 測定結果（2026-10-22、`arm_place_sphere_deep/2026-10-21_23-25-44/model_1999.pt`）
+
+2048 環境、2000 iteration。評価は 6000 エピソード、arm_init_level 10、物体位置ノイズあり（teacher の学習時と同じ条件）。
+
+| | Shallow | Deep |
+|---|---|---|
+| 成功率 | 98.72% | **98.00%** |
+| 落下 | 1.13% | 1.42% |
+| ビンの中で止まらない | 0.03% | 0.32% |
+| 壁の上に乗ったまま | 0.08% | 0% |
+| 成功までの時間（中央値 / p90） | 0.96 / 1.32 s | 1.58 / 2.62 s |
+
+- 壁の上に乗せて止まる局所解は起きなかった。壁の上は「持ち上げている」と判定されるので 1 ステップあたり約 31 になるが、ビンに入れて離せば約 66 になる。
+- 掴まずに押し込んだ成功は 0 件。
+
+**失敗の傾向は Shallow と逆。** Shallow では「遠くへ運ぶと落とす」だったが、Deep では「ビンが近く、腕の通り道にあると落とす」。
+
+| 条件 | 成功率 |
+|---|---|
+| 球とビンの距離 0.08–0.11 m | 96.5%（落下 2.7%） |
+| 同 0.11 m 以上 | 約 99.0% |
+| ビンが球の手前（ロボット側） | 94.0% |
+| ビンが球の奥 | 96.3% |
+| ビンが球の左右 | 98.4–98.7% |
+
+腕や指が高い壁に当たって、球を弾いていると考えている。PLAY で動きは見たが、壁との接触を直接測ってはいない。改善するなら、Deep だけ `BIN_DISTANCE_RANGE` の下限を 0.11 m に上げるのが最初の手になる。
+
+**学習が不安定。**
+- `mean_noise_std` が 1200 iteration 付近で 8.6 まで膨らみ（Shallow は 3.2）、その間、成功率は 89% から 76% まで落ちた。
+- 1250 iteration で滑らかさのペナルティが強まると、2.3 まで戻り、成功率も 94% に回復した。
+- エントロピー係数 0.006 が Deep には強すぎる可能性がある。seed は 1 本だけで、再現性は未確認。
+
+Student は蒸留していない。
+
+---
+
+## 15. リスク（実装前に挙げたもの）と、その結果
 
 1. **押し込みで成功してしまう抜け道**：壁の上端（1.5 cm）は球の半径（2 cm）より低いので、掴まずに転がして押し込める可能性がある。→ **起きなかった。** 6000 エピソード中、一度も持ち上げずに成功したのは 0 件。
-2. **指と壁の干渉**：離す瞬間に指が壁に当たり、球が弾かれる可能性がある。PLAY で目視確認し、必要なら `BIN_INNER_HALF` を 0.025 m にする。
+2. **指と壁の干渉**：離す瞬間に指が壁に当たり、球が弾かれる可能性がある。PLAY で目視確認し、必要なら `BinCfg.inner_half` を 0.025 m にする。
 3. **精度 5 mm と観測ノイズ**：policy 群の `object_position` には σ=2 cm のノイズとバイアスがかかっている。ただし `tcp_to_object` はノイズのない値なので、把持した後の位置合わせは TCP 基準でできる見込み。ビン位置にノイズを入れるのは後回しにする。
 4. **球の転がり**：アプローチ中に指が触れると、球が逃げる。Arm-Lift で横倒しの円柱が苦戦した問題と同じ種類。
 5. **報酬の段差**：上の表の単調性は 1 ステップあたりの最大値で確認しただけ。→ **問題なかった。** `object_in_bin` は 300〜600 iteration で立ち上がった。
