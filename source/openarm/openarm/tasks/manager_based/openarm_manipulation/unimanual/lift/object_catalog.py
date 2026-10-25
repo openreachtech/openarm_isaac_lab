@@ -197,7 +197,10 @@ def _make_cuboid(rng: np.random.Generator) -> CatalogEntry:
     others = sorted(
         min(narrow * float(rng.uniform(*CUBOID_ASPECT)), CUBOID_MAX_HALF) for _ in range(2)
     )
-    half = (narrow, others[0], others[1])
+    return _cuboid_entry((narrow, others[0], others[1]))
+
+
+def _cuboid_entry(half: tuple[float, float, float]) -> CatalogEntry:
     size = tuple(2.0 * h for h in half)
     # One pose per pair of opposite faces. Rotating 90 deg about x brings the local y axis
     # up, about y brings local x up, so the resting height is that axis's half-extent.
@@ -314,6 +317,12 @@ def build_catalog(seed: int = CATALOG_SEED, per_category: int = PER_CATEGORY) ->
     return catalog
 
 
+def build_cube_catalog(edge: float = 0.04) -> list[CatalogEntry]:
+    """A single cube of fixed edge, for ``Arm-Place-Cube-Box``. One-entry, for the same reasons
+    as ``build_sphere_catalog``; its three resting poses are the same pose."""
+    return [_cuboid_entry((edge / 2,) * 3)]
+
+
 def build_sphere_catalog(radius: float = 0.02) -> list[CatalogEntry]:
     """A single sphere of fixed radius, for ``Arm-Place-Sphere``.
 
@@ -327,6 +336,7 @@ def build_sphere_catalog(radius: float = 0.02) -> list[CatalogEntry]:
 CATALOGS = {
     "primitives": build_catalog,
     "sphere": build_sphere_catalog,
+    "cube": build_cube_catalog,
 }
 """Catalogs an environment can name through ``env.cfg.object_catalog``."""
 

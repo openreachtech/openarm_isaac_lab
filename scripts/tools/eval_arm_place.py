@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Failure modes and per-condition success rates for ``Arm-Place-Sphere`` and its student.
+"""Failure modes and per-condition success rates for the ``Arm-Place-*`` tasks.
 
     python scripts/tools/eval_arm_place.py --load_run <run> --checkpoint model_1999.pt [--clean_obs]
+    python scripts/tools/eval_arm_place.py --task Arm-Place-Cube-Box --load_run <run> \
+        --checkpoint model_1999.pt
     python scripts/tools/eval_arm_place.py --task Arm-Place-Sphere-Student --num_envs 256 \
         --load_run <run> --checkpoint model_1999.pt
 
@@ -23,13 +25,15 @@ are clean already, so compare a student against a teacher measured with it.
 
 The training log reports one success rate. This sorts every failed episode into the one
 place it went wrong, then breaks success down by the things the reset randomised: the
-spawn layout, the direction from sphere to bin, mass and friction.
+spawn layout, the direction from object to bin, mass and friction. It also reports how high
+the object was let go of, and whether the hand was inside the box at that moment.
 
 Failure classes, assigned in this order, from the state at the end of the episode:
 
-  dropped           terminated early -- the sphere left the table
+  dropped           terminated early -- the object left the table
   never lifted      not once above the lift gate (never picked up)
   held in bin       in the bin, still gripped
+  off target        in the bin and let go of, but outside ``place_tolerance`` of the centre
   moving in bin     in the bin, let go, still sliding or rolling (spin about z is allowed)
   held above bin    over the bin and still lifted -- carried there, not lowered
   on the rim        over the bin, not lifted, not in it: resting on a wall
@@ -91,14 +95,19 @@ from openarm.tasks.manager_based.openarm_manipulation.unimanual.place.mdp.reward
     is_grasped,
     object_in_bin,
     object_is_static,
+    object_on_target,
+    place_target_w,
     object_over_bin,
     place_success,
 )
+
+RELEASE_STEPS = 3
 
 FAILURES = (
     "dropped",
     "never lifted",
     "held in bin",
+    "off target",
     "moving in bin",
     "held above bin",
     "on the rim",
@@ -155,6 +164,17 @@ def main() -> None:
     start = episode_start()
     ever_lifted = torch.zeros(n, dtype=torch.bool, device=device)
     ever_in_bin = torch.zeros(n, dtype=torch.bool, device=device)
+    # Release events. Contact can flicker for a step mid-carry, so a release is a grasp held
+    # RELEASE_STEPS steps followed by RELEASE_STEPS steps without one; the state is read at
+    # the first of those. The last release of the episode is the one reported.
+    geometry = u.cfg.bin_geometry
+    grasp_streak = torch.zeros(n, dtype=torch.long, device=device)
+    free_streak = torch.zeros(n, dtype=torch.long, device=device)
+    armed = torch.zeros(n, dtype=torch.bool, device=device)
+    pending_h = torch.zeros(n, device=device)
+    pending_in = torch.zeros(n, dtype=torch.bool, device=device)
+    release_h = torch.full((n,), float("nan"), device=device)
+    release_in = torch.zeros(n, dtype=torch.bool, device=device)
     first_success = torch.full((n,), -1, dtype=torch.long, device=device)
     final: dict[str, torch.Tensor] = {}
     final_detail: dict[str, torch.Tensor] = {}
@@ -176,6 +196,9 @@ def main() -> None:
             "finger_force_min": torch.minimum(*contacts),
             "opening": robot.data.joint_pos[:, finger_ids].mean(dim=1) / FINGER_OPEN,
             "tcp_to_obj": torch.norm(tcp - obj.data.root_pos_w, dim=1),
+            # Object height above its resting height in the bin: how far it still had to go down.
+            "obj_above_rest": obj.data.root_pos_w[:, 2] - place_target_w(u)[:, 2],
+            "obj_xy_off": torch.norm(obj.data.root_pos_w[:, :2] - place_target_w(u)[:, :2], dim=1),
         }
 
     rows: list[dict] = []
@@ -197,11 +220,33 @@ def main() -> None:
             new_success = success & (first_success < 0)
             first_success[new_success] = u.episode_length_buf[new_success]
 
+            grasped = is_grasped(u)
+            grasp_streak = torch.where(grasped, grasp_streak + 1, torch.zeros_like(grasp_streak))
+            armed |= grasp_streak >= RELEASE_STEPS
+            letting_go = armed & ~grasped & (free_streak == 0)
+            if letting_go.any():
+                # Height of the sphere's centre above where it rests on the bin floor, and
+                # whether the TCP was inside the box, below the rim, at that moment.
+                rest_w = place_target_w(u)
+                tcp = u.scene["ee_frame"].data.target_pos_w[:, 0, :]
+                tcp_off = tcp - bin_.data.root_pos_w
+                inside = (tcp_off[:, :2].abs() <= geometry.inner_half).all(dim=1) & (
+                    tcp_off[:, 2] <= geometry.rim_height
+                )
+                pending_h = torch.where(letting_go, obj.data.root_pos_w[:, 2] - rest_w[:, 2], pending_h)
+                pending_in = torch.where(letting_go, inside, pending_in)
+            free_streak = torch.where(armed & ~grasped, free_streak + 1, torch.zeros_like(free_streak))
+            committed = free_streak == RELEASE_STEPS
+            release_h = torch.where(committed, pending_h, release_h)
+            release_in = torch.where(committed, pending_in, release_in)
+            armed &= ~committed
+
             at_snapshot = u.episode_length_buf == snapshot_step
             if at_snapshot.any():
                 now = {
                     "success": success,
                     "in_bin": in_bin,
+                    "on_target": object_on_target(u),
                     "grasped": is_grasped(u),
                     "static": object_is_static(u),
                     "over_bin": object_over_bin(u),
@@ -228,6 +273,8 @@ def main() -> None:
                             "outcome": classify(f, bool(ever_lifted[i]), bool(ever_in_bin[i])),
                             "pushed": bool(f.get("success")) and not bool(ever_lifted[i]),
                             "t_success": int(first_success[i]) * step_dt if first_success[i] >= 0 else None,
+                            "release_h": None if torch.isnan(release_h[i]) else float(release_h[i]),
+                            "release_in": bool(release_in[i]),
                             "detail": {k: float(v[i]) for k, v in final_detail.items()} if bool(seen[i]) else {},
                         }
                     )
@@ -237,6 +284,11 @@ def main() -> None:
                 ever_lifted[done] = False
                 ever_in_bin[done] = False
                 first_success[done] = -1
+                grasp_streak[done] = 0
+                free_streak[done] = 0
+                armed[done] = False
+                release_h[done] = float("nan")
+                release_in[done] = False
                 for key in final:
                     final[key][done] = False
 
@@ -253,7 +305,9 @@ def classify(f: dict, ever_lifted: bool, ever_in_bin: bool) -> str:
     if not ever_lifted:
         return "never lifted"
     if f["in_bin"]:
-        return "held in bin" if f["grasped"] else "moving in bin"
+        if f["grasped"]:
+            return "held in bin"
+        return "off target" if not f["on_target"] else "moving in bin"
     if f["over_bin"]:
         return "held above bin" if f["lifted"] else "on the rim"
     if f["lifted"]:
@@ -276,6 +330,31 @@ def report(rows: list[dict]) -> None:
     print(f"[eval] successes without ever lifting (pushed in): {pushed}")
 
     print("\n" + "=" * 60)
+    print("RELEASE: object centre above its resting height, at the last release")
+    print("=" * 60)
+    edges = (-1.0, 0.01, 0.03, 0.06, 0.10, 1.0)
+    def band(lo: float, hi: float) -> str:
+        if lo < 0:
+            return f"<{hi * 100:.0f} cm"
+        return f">{lo * 100:.0f} cm" if hi >= 1 else f"{lo * 100:.0f}-{hi * 100:.0f} cm"
+
+    print(f"{'':<16}{'n':>6}{'hand in box':>13}" + "".join(
+        f"{band(lo, hi):>11}" for lo, hi in zip(edges[:-1], edges[1:])))
+    for label, group in (
+        ("success", [r for r in rows if r["outcome"] == "success"]),
+        ("failure", [r for r in rows if r["outcome"] != "success"]),
+    ):
+        released = [r for r in group if r["release_h"] is not None]
+        if not released:
+            continue
+        m = len(released)
+        cells = "".join(
+            f"{sum(lo <= r['release_h'] < hi for r in released) / m * 100:>10.1f}%"
+            for lo, hi in zip(edges[:-1], edges[1:])
+        )
+        print(f"{label:<16}{m:>6}{sum(r['release_in'] for r in released) / m * 100:>12.1f}%{cells}")
+
+    print("\n" + "=" * 60)
     print("FAILURE MODES (share of all episodes / of failures)")
     print("=" * 60)
     for name in FAILURES:
@@ -286,9 +365,10 @@ def report(rows: list[dict]) -> None:
     print("\n" + "=" * 60)
     print("STATE AT THE END: median [p10, p90]")
     print("=" * 60)
-    keys = ("lin_vel", "ang_vel", "ang_vel_z", "finger_force_max", "finger_force_min", "opening", "tcp_to_obj")
+    keys = ("lin_vel", "ang_vel", "ang_vel_z", "finger_force_max", "finger_force_min", "opening", "tcp_to_obj",
+            "obj_above_rest", "obj_xy_off")
     print(f"{'':<16}" + "".join(f"{k:>20}" for k in keys))
-    for name in ("success", "moving in bin"):
+    for name in ("success", "moving in bin", "held above bin", "held in bin", "off target"):
         group = [r["detail"] for r in rows if r["outcome"] == name and r["detail"]]
         if not group:
             continue

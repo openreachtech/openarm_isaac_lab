@@ -62,6 +62,22 @@ DEEP_BIN = BinCfg(inner_half=0.03, wall_height=0.08)
 play each way. Too deep to lower a gripped sphere into without the fingers meeting the
 walls, so it has to be carried over the rim and let go of from above."""
 
+HAND_BOX = BinCfg(inner_half=0.10, wall_height=0.08)
+"""Wide enough for the gripper to go in holding the sphere, wrist included.
+
+Measured in the hand frame with the fingers closed on a 4 cm sphere, the fingers span
+10.1 cm along the closing direction and 6.1 cm across it, and reach 8.5 cm below the hand
+(the TCP 2.5 mm short of the tips). The walls stay at DEEP_BIN's 8 cm: with the sphere on
+the floor the finger roots sit about 10.5 cm up, so a 10 cm wall would leave the palm
+skimming the rim.
+
+20 cm rather than the 14 cm the fingers alone need. Driving the TCP straight down by IK into
+a 14 cm box (2026-10-22, 12 positions): only with the fingers closing along y does it get
+there at all -- along x the wrist joints run out first -- and even then link7 came to rest
+on the rim at half the positions (12-50 N, vertical) and the fingers rubbed the walls at
+several. Pointing straight down also needs joints 5-7 at or near their limits, so the
+extra width is room to come in tilted."""
+
 BIN_COLOUR = (0.55, 0.45, 0.35)
 
 
