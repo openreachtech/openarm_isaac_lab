@@ -4,7 +4,7 @@
 
 - 移植元: `ManiSkill/mani_skill/envs/tasks/tabletop/place_sphere.py`（ManiSkill3 側も中身は同一）
 - 先行タスク: `Arm-Lift` — ロボット、基部高さ、腕アクション、連続グリッパ、RMA の観測構成、初期姿勢カリキュラムを継承する
-- タスク ID: **`Arm-Place-Sphere`**（teacher）/ **`Arm-Place-Sphere-Student`**（深度カメラ、§13）/ **`Arm-Place-Sphere-Deep`**（深いビン、§14）/ **`Arm-Place-Cube-Box`**（手を入れて置く箱、§15）
+- タスク ID: **`Arm-Place-Sphere`**（teacher）/ **`Arm-Place-Sphere-Student`**（深度カメラ、§13）/ **`Arm-Place-Sphere-Deep`**（深いビン、§14）/ **`Arm-Place-Cube-Box`**（手を入れて置く箱、§15）/ **`Arm-Place-Cube-Box-Student`**（§15）
 
 ---
 
@@ -405,6 +405,23 @@ Deep の方策は、縁の上から落としていた（成功したエピソー
 - 行動ノイズが 1200 iteration 前後で膨らむ傾向は、Deep 以降のすべての run で続いている（最大 3〜14）。エントロピー係数 0.006 は、まだ見直していない。
 
 `Arm-Place-Sphere-Box`（球の版）は、比較用として登録を残している。#5 以降の修正を入れた状態では、まだ学習していない。
+
+### Student（`Arm-Place-Cube-Box-Student`）
+
+構成は §13 と同じ（Arm-Lift-Student の観測グループ、深度カメラ、蒸留 runner をそのまま使う）。teacher は上の `model_1999.pt`。128 環境、2000 iteration、約 45 分。
+
+| | Teacher（`--clean_obs`、3000 エピソード） | Student（3072 エピソード） |
+|---|---|---|
+| 成功 | 85.4% | **81.5%** |
+| 中心から外れた | 10.4% | 13.3% |
+| 卓上に残った | 1.4% | 2.9% |
+| 成功までの時間（中央値） | 1.12 s | 1.10 s |
+
+- 差は −3.9 ポイント。Arm-Lift-Student の −3.0 と同程度。
+- 内訳は、中心から外れた分が +2.9、卓上に残った分が +1.5。卓上に残るのは掴む・運ぶ段階の失敗なので、立方体の向き（teacher は `rot_6d` で直接受け取っていた）を深度画像から推定するのが効いている可能性がある。ただし未検証。
+- 成功したエピソードはすべて、teacher と同じく手を箱に入れて、底から 1 cm 未満の高さで離している。
+- 行動の模倣損失は 14.3 から 1.87 まで下がり、1000 iteration で下げ止まった。球の student（0.014）より桁違いに大きい。teacher の行動ノイズが大きいまま学習を終えたことが原因と考えている。
+- 深度画像では、箱は大きなブロックとして映るが、壁の内側（箱の中）は見えない。
 
 ---
 

@@ -86,3 +86,22 @@ gym.register(
     },
     disable_env_checker=True,
 )
+
+# The cube box task's depth student, distilled the same way:
+#   train.py --task Arm-Place-Cube-Box-Student --teacher_task Arm-Place-Cube-Box \
+#       --load_run <teacher run> --checkpoint <ckpt> --enable_cameras
+
+gym.register(
+    id="Arm-Place-Cube-Box-Student",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.arm_place_sphere_student_env_cfg:ArmPlaceCubeBoxStudentEnvCfg",
+        "play_env_cfg_entry_point": (
+            f"{__name__}.arm_place_sphere_student_env_cfg:ArmPlaceCubeBoxStudentEnvCfg_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_rma_distillation_cfg:ArmLiftStudentDistillationRunnerCfg"
+        ),
+    },
+    disable_env_checker=True,
+)
