@@ -4,7 +4,7 @@
 
 - 移植元: `ManiSkill/mani_skill/envs/tasks/tabletop/place_sphere.py`（ManiSkill3 側も中身は同一）
 - 先行タスク: `Arm-Lift` — ロボット、基部高さ、腕アクション、連続グリッパ、RMA の観測構成、初期姿勢カリキュラムを継承する
-- タスク ID: **`Arm-Place-Sphere`**（teacher）/ **`Arm-Place-Sphere-Student`**（深度カメラ、§13）/ **`Arm-Place-Sphere-Deep`**（深いビン、§14）/ **`Arm-Place-Cube-Box`**（手を入れて置く箱、§15）/ **`Arm-Place-Cube-Box-Student`**（§15）
+- タスク ID: **`Arm-Place-Sphere`**（teacher）/ **`Arm-Place-Sphere-Student`**（深度カメラ、§13）/ **`Arm-Place-Sphere-Deep`**（深いビン、§14）/ **`Arm-Place-Cube-Box`**（手を入れて置く箱、§15）/ **`Arm-Place-Cube-Box-Student`**（§15）/ **`Arm-Place-Cube-Box-Levels`**（壁の高さのカリキュラム、§16）
 
 ---
 
@@ -202,6 +202,7 @@ Isaac Lab は報酬を項の**加算**で計算するので、ManiSkill の「�
 | `place/mdp/events.py` | 新規。`reset_bin_near_object` |
 | `place/mdp/release.py` | 新規。離した瞬間を検出して「手で置いた」かを判定する `ReleaseTracker`、`placement_valid`（§15） |
 | `place/mdp/terminations.py` | 新規。物理の発散を打ち切る `physics_blowup`、上限付きのペナルティ（§15） |
+| `place/mdp/wall_levels.py` | 新規。壁の高さのレベル、壁の枠を置くリセットイベント、カリキュラム（§16） |
 | `place/mdp/rewards.py` | 新規。判定（`place_target_w`、`object_in_bin`、`object_over_bin`、`is_grasped`、`object_is_static`、`place_success`）と報酬項 |
 | `place/mdp/curriculums.py` | 新規。`arm_init_level_place`、および成功率をログに出す `episode_place_success` |
 | `lift/object_catalog.py` | 追加。`build_sphere_catalog(radius)`、`build_cube_catalog(edge)`、名前で catalog を選ぶ `build_object_catalog(name)` |
@@ -425,7 +426,64 @@ Deep の方策は、縁の上から落としていた（成功したエピソー
 
 ---
 
-## 16. リスク（実装前に挙げたもの）と、その結果
+## 16. 壁の高さのカリキュラム（`Arm-Place-Cube-Box-Levels`）
+
+Cube-Box の箱（内寸 20 cm）の壁を、Go2 の `terrain_levels` と同じ形のカリキュラムで、8 cm から 15 cm まで上げていく。
+
+### 仕組み
+
+- **箱は 2 つの kinematic な剛体に分けた。** 底板（`bin`）と、15 cm で作った壁の枠（`bin_walls`）で、どちらも同じ座標系を使う。形を作るのは最初の 1 回だけ。リセット時に壁の枠を z 方向に動かして、レベルが求める高さだけ底板から上に出す。余った部分はテーブルの中に沈む。kinematic な剛体と動かないテーブルの間には接触が生じない。
+- **レベル**：0〜9 で、壁の高さは 8.0〜15.0 cm（約 0.78 cm 刻み、`WALL_LEVELS`）。環境ごとに持つ。
+- **昇降**（`wall_level`）：成功したら上げる。物体を箱に入れられなかったら下げる。最高レベルで成功したら、ランダムなレベルへ戻す（`TerrainImporter.update_env_origins` と同じ規則）。
+- **方策には壁の高さを見せない。** 縁の高さを使う判定（`object_inside_box` など）は、`rim_height(env)` で環境ごとの値を読む。
+- 確認：各レベルで壁の上に立方体を落として高さを測り、10 段階すべて指定どおりだった。
+
+### 使い方
+
+- レベルの固定（学習、評価）：`env.events.reset_bin_walls.params.fixed_level=N`。既定値は `-1` で、カリキュラムに従う。Hydra は既定値にないキーを追加できず、configclass も `None` の既定値に int を受け付けないので、`-1` で表している。
+- 評価：`eval_arm_place.py --task Arm-Place-Cube-Box-Levels --wall_level N`（既定値は最高レベル）。
+- PLAY：既定では最高レベル。`PLAY_WALL_LEVEL=N` で変えられる。`play.py` は PLAY 用の設定をレジストリから読み直すので、Hydra の上書きが効かないため、環境変数にしている。
+- `play.py` の `--checkpoint` は**ファイルのパス**として扱われる。run 名で選ぶときは `--load_run` を使う。
+
+### 6 cm から始めると失敗した（2026-10-25）
+
+最初はレベルを 6〜15 cm にしていたが、全環境がレベル 0（6 cm）から上がらず、成功率は 0% のままだった。原因を詰めるために、比べられる run を揃えた。
+
+| run | 壁 | 箱の作り | 結果 |
+|---|---|---|---|
+| Cube-Box、seed 42 | 8 cm | 1 剛体 | 評価 84.5% |
+| Cube-Box、seed 43 | 8 cm | 1 剛体 | 学習中 66% |
+| Levels、8 cm に固定 | 8 cm | 2 剛体 | 学習中 71% |
+| Levels、6〜15 cm（レベル 0 のまま） | 6 cm | 2 剛体 | **0%** |
+
+- 保存されている設定（`params/env.yaml`、`agent.yaml`）とコードを突き合わせた。違いは、意図した変更（箱の 2 分割、壁の高さ、カリキュラム）だけだった。
+- さらに、84.5% の方策を Levels の環境の 8 cm で動かすと、同じ 84.5% だった。
+- 以上から、残る違いは「壁が 6 cm」であることだけになった。
+- PLAY で見ると、6 cm では**立方体を傾けて、ひっくり返すように置こうとしていた**。壁が低いと、手を傾けたまま入れられる。そのため立方体が辺や角で底に着き、「平らに置いたときの高さ ±5 mm」の判定に入らないので、離しても報酬が出ない。8 cm 以上では手を真下に向けるしかないので、この問題が起きない。終了時の立方体の傾きを数値で測ってはいない。
+- そこで、レベルを 8 cm から始めることにした。
+
+### 測定結果（`arm_place_cube_box_levels/2026-10-27_12-10-21/model_1999.pt`、ゼロから 2000 iteration）
+
+学習中、壁のレベルの平均は 1000 iteration で約 6.4 まで上がり、その後は約 6.2 で横ばいだった。学習中の成功率は 48% で、まだ上がり続けていた。
+
+| レベル（壁） | 成功率 | 中心から外れた |
+|---|---|---|
+| 0（8 cm） | 60.3% | 35.8% |
+| 2（10 cm） | 64.3% | — |
+| 4（11 cm） | 70.8% | — |
+| 6（13 cm） | 64.7% | 33.8% |
+| 8（14 cm） | 48.3% | — |
+| 9（15 cm） | 35.8% | 59.4% |
+
+（各レベル 1200 エピソード、arm_init_level 10）
+
+- **手首を傾けて入れることを学習した。** IK で真下に向けたときは、10 cm 以上で手首（link7）が縁に乗った。今回は、15 cm でも成功したエピソードはすべて、手を箱に入れて、底から 1 cm 未満の高さで離している。
+- 失敗のほとんど（9 割以上）は、1 cm 以内を外したもの。落下、縁に乗る、握ったままといった失敗はほぼない。6 cm のときのような、ひっくり返す癖も出ていない。
+- 8 cm での 60% は、Cube-Box 単体（84.5%）より低い。1 つの方策で全レベルを学習していて、各レベルの練習量が少ないこと、行動ノイズが 4.3 と大きいまま学習を終えたことが理由と考えている。学習を延長すれば上がる可能性がある（未検証）。
+
+---
+
+## 17. リスク（実装前に挙げたもの）と、その結果
 
 1. **押し込みで成功してしまう抜け道**：壁の上端（1.5 cm）は球の半径（2 cm）より低いので、掴まずに転がして押し込める可能性がある。→ **起きなかった。** 6000 エピソード中、一度も持ち上げずに成功したのは 0 件。
 2. **指と壁の干渉**：離す瞬間に指が壁に当たり、球が弾かれる可能性がある。PLAY で目視確認し、必要なら `BinCfg.inner_half` を 0.025 m にする。

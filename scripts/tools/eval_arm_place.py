@@ -62,6 +62,13 @@ parser.add_argument("--arm_init_level", type=int, default=10)
 parser.add_argument("--load_run", type=str, default=".*")
 parser.add_argument("--checkpoint", type=str, default="model_.*.pt")
 parser.add_argument(
+    "--wall_level",
+    type=int,
+    default=None,
+    help="For tasks with wall levels (Arm-Place-Cube-Box-Levels): the level to measure at."
+    " Default: the top one.",
+)
+parser.add_argument(
     "--clean_obs",
     action="store_true",
     help="Turn off the teacher's object-position noise, to compare it with a student on equal terms.",
@@ -97,6 +104,7 @@ from openarm.tasks.manager_based.openarm_manipulation.unimanual.place.mdp.reward
     object_is_static,
     object_on_target,
     place_target_w,
+    rim_height,
     object_over_bin,
     place_success,
 )
@@ -123,6 +131,11 @@ def main() -> None:
     env_cfg.curriculum.arm_init_level = None
     if args_cli.clean_obs:
         env_cfg.observations.policy.enable_corruption = False
+    if getattr(env_cfg, "wall_levels", None) is not None:
+        level = len(env_cfg.wall_levels) - 1 if args_cli.wall_level is None else args_cli.wall_level
+        env_cfg.events.reset_bin_walls.params["fixed_level"] = level
+        env_cfg.curriculum.wall_level = None
+        print(f"[eval] wall level {level}: {env_cfg.wall_levels[level] * 100:.0f} cm", flush=True)
 
     agent_cfg = load_cfg_from_registry(args_cli.task, "rsl_rl_cfg_entry_point")
     experiment = agent_cfg.experiment_name or args_cli.task.replace("-Play", "").lower().replace("-", "_")
@@ -231,7 +244,7 @@ def main() -> None:
                 tcp = u.scene["ee_frame"].data.target_pos_w[:, 0, :]
                 tcp_off = tcp - bin_.data.root_pos_w
                 inside = (tcp_off[:, :2].abs() <= geometry.inner_half).all(dim=1) & (
-                    tcp_off[:, 2] <= geometry.rim_height
+                    tcp_off[:, 2] <= rim_height(u)
                 )
                 pending_h = torch.where(letting_go, obj.data.root_pos_w[:, 2] - rest_w[:, 2], pending_h)
                 pending_in = torch.where(letting_go, inside, pending_in)

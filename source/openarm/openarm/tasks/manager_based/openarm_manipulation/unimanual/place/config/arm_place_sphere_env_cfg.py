@@ -21,6 +21,8 @@ in the air to the floor of a bin, which is done by publishing the bin target as 
 doc/design/arm_place_sphere_design.md.
 """
 
+import os
+
 import isaaclab.sim as sim_utils
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
@@ -42,7 +44,7 @@ from ...lift.lift_env_cfg import ARM_INIT_NUM_LEVELS, CurriculumCfg
 from ...lift.mdp.events import TABLE_TOP_Z
 from ...lift.object_catalog import build_object_catalog, catalog_spawn_cfg
 from .. import mdp
-from ..bin_asset import DEEP_BIN, HAND_BOX, SHALLOW_BIN, BinCfg, bin_usd_path
+from ..bin_asset import DEEP_BIN, HAND_BOX, SHALLOW_BIN, TALL_HAND_BOX, BinCfg, bin_usd_path
 
 OBJECT_CATALOG = "sphere"
 """One 2 cm sphere, as ManiSkill. See ``build_sphere_catalog``."""
@@ -181,6 +183,10 @@ class ArmPlaceSphereEnvCfg(ArmLiftEnvCfg):
 
     success_requires_rest: bool = True
     """Whether ``place_success`` also asks for the object to be at rest."""
+
+    wall_levels: tuple[float, ...] | None = None
+    """Wall heights by level, for a bin built in two bodies (see place/mdp/wall_levels.py).
+    None: one body, walls at ``bin_geometry.wall_height``."""
 
     events: PlaceEventCfg = PlaceEventCfg()
     rewards: PlaceRewardsCfg = PlaceRewardsCfg()
@@ -439,3 +445,79 @@ class ArmPlaceCubeBoxEnvCfg_PLAY(ArmPlaceCubeBoxEnvCfg):
         self.observations.policy.enable_corruption = False
         self.events.reset_robot_joints.params["fixed_level"] = ARM_INIT_NUM_LEVELS
         self.curriculum.arm_init_level = None
+
+
+##
+# Cube box with the wall height raised by level
+##
+
+WALL_LEVELS = tuple(round(0.08 + 0.07 * i / 9, 4) for i in range(10))
+"""8 cm to 15 cm in ten levels (~0.78 cm apart): from the height Cube-Box was trained at to
+well past the ~8 cm at which the wrist, held straight down, meets the rim.
+
+Not lower. Starting at 6 cm (2026-10-25) every environment stayed at level 0 and success
+never left zero: with the walls that low the hand can come in tilted, the cube goes down
+on an edge, and a cube resting tilted is not "in the bin" by the rest-height check, so
+releasing it never paid. In play it kept turning the cube over trying to set it down. The
+same environment pinned at 8 cm learned normally (71% at 2000 iterations)."""
+
+
+@configclass
+class ArmPlaceCubeBoxLevelsEnvCfg(ArmPlaceCubeBoxEnvCfg):
+    """Arm-Place-Cube-Box with the walls raised by a terrain-style level curriculum.
+
+    The question is how high the walls can go before the policy cannot put the cube down
+    inside -- whether it learns to tilt the wrist in where straight down does not fit. The
+    mean of ``Curriculum/wall_level`` answers it. The policy is not told the wall height.
+
+    It does tilt the wrist in. From scratch, 2000 iterations (2026-10-27): mean level ~6.2,
+    and success by fixed level 60% at 8 cm, 71% at 11, 65% at 13, 48% at 14, 36% at 15 --
+    the hand inside the box at every successful release, and nearly every failure a miss of
+    the 1 cm tolerance rather than a drop or a cube left on the rim.
+    """
+
+    bin_geometry: BinCfg = TALL_HAND_BOX
+    wall_levels: tuple[float, ...] | None = WALL_LEVELS
+
+    def __post_init__(self):
+        super().__post_init__()
+        # Two kinematic bodies sharing one frame: the floor, placed by reset_bin as before,
+        # and the wall ring, stood on it at the level's height by reset_bin_walls.
+        self.scene.bin.spawn.usd_path = bin_usd_path(self.bin_geometry, part="floor")
+        self.scene.bin_walls = RigidObjectCfg(
+            prim_path="{ENV_REGEX_NS}/BinWalls",
+            init_state=self.scene.bin.init_state,
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=bin_usd_path(self.bin_geometry, part="walls"),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    kinematic_enabled=True, disable_gravity=True
+                ),
+            ),
+        )
+        # Declared after reset_bin, so it reads where the floor was just put.
+        # fixed_level is spelled out, as -1 (follow the curriculum), so that it can be pinned
+        # from the command line: env.events.reset_bin_walls.params.fixed_level=N. Hydra cannot
+        # add a key that is not already there, and configclass will not take an int where the
+        # default is None. Pinned, it overrides whatever level the curriculum sets.
+        self.events.reset_bin_walls = EventTerm(
+            func=mdp.reset_bin_walls, mode="reset", params={"fixed_level": -1}
+        )
+        self.curriculum.wall_level = CurrTerm(func=mdp.wall_level)
+
+
+@configclass
+class ArmPlaceCubeBoxLevelsEnvCfg_PLAY(ArmPlaceCubeBoxLevelsEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.scene.env_spacing = 2.5
+        self.observations.policy.enable_corruption = False
+        self.events.reset_robot_joints.params["fixed_level"] = ARM_INIT_NUM_LEVELS
+        self.curriculum.arm_init_level = None
+        # The tallest walls, unless PLAY_WALL_LEVEL names another. An environment variable
+        # because play.py reloads this config from the registry, after any Hydra override.
+        level = os.environ.get("PLAY_WALL_LEVEL")
+        self.events.reset_bin_walls.params["fixed_level"] = (
+            len(WALL_LEVELS) - 1 if level is None else int(level)
+        )
+        self.curriculum.wall_level = None

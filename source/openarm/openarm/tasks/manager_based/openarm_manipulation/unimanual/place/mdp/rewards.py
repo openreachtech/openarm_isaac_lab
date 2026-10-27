@@ -56,6 +56,20 @@ def bin_geometry(env: ManagerBasedRLEnv) -> BinCfg:
     return env.cfg.bin_geometry
 
 
+def rim_height(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Per-environment height of the wall tops above the bin's origin.
+
+    The geometry's own figure, unless the task sets the wall height by level
+    (``env.cfg.wall_levels``), in which case each environment's level decides it.
+    """
+    geometry = bin_geometry(env)
+    if getattr(env.cfg, "wall_levels", None) is None:
+        return torch.full((env.num_envs,), geometry.rim_height, device=env.device)
+    from .wall_levels import wall_heights
+
+    return geometry.floor_half_thickness + wall_heights(env)
+
+
 def place_target_w(
     env: ManagerBasedRLEnv, bin_cfg: SceneEntityCfg = SceneEntityCfg("bin")
 ) -> torch.Tensor:
@@ -220,7 +234,7 @@ def place_tracking_over_rim(
     obj: RigidObject = env.scene[object_cfg.name]
     waypoint = env.scene[bin_cfg.name].data.root_pos_w.clone()
     rest_height = object_catalog(env).rest_pose_height
-    waypoint[:, 2] += bin_geometry(env).rim_height + rest_height + clearance
+    waypoint[:, 2] += rim_height(env) + rest_height + clearance
     distance = torch.norm(waypoint - obj.data.root_pos_w, dim=1)
     lifted = obj.data.root_pos_w[:, 2] > lift_threshold(env, margin)
     approach = lifted * (1 - torch.tanh(distance / std))
@@ -281,7 +295,7 @@ def object_inside_box(
     """The object's centre is inside the box: within the inner walls and below the rim."""
     offset = env.scene[object_cfg.name].data.root_pos_w - env.scene[bin_cfg.name].data.root_pos_w
     geometry = bin_geometry(env)
-    return (offset[:, :2].abs() <= geometry.inner_half).all(dim=1) & (offset[:, 2] <= geometry.rim_height)
+    return (offset[:, :2].abs() <= geometry.inner_half).all(dim=1) & (offset[:, 2] <= rim_height(env))
 
 
 def held_or_placed(env: ManagerBasedRLEnv) -> torch.Tensor:

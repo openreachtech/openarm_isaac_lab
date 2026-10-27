@@ -87,6 +87,17 @@ gym.register(
     disable_env_checker=True,
 )
 
+gym.register(
+    id="Arm-Place-Cube-Box-Levels",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.arm_place_sphere_env_cfg:ArmPlaceCubeBoxLevelsEnvCfg",
+        "play_env_cfg_entry_point": f"{__name__}.arm_place_sphere_env_cfg:ArmPlaceCubeBoxLevelsEnvCfg_PLAY",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_rma_cfg:ArmLiftRmaPPORunnerCfg",
+    },
+    disable_env_checker=True,
+)
+
 # The cube box task's depth student, distilled the same way:
 #   train.py --task Arm-Place-Cube-Box-Student --teacher_task Arm-Place-Cube-Box \
 #       --load_run <teacher run> --checkpoint <ckpt> --enable_cameras

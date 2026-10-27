@@ -78,6 +78,15 @@ on the rim at half the positions (12-50 N, vertical) and the fingers rubbed the 
 several. Pointing straight down also needs joints 5-7 at or near their limits, so the
 extra width is room to come in tilted."""
 
+TALL_HAND_BOX = BinCfg(inner_half=0.10, wall_height=0.15)
+"""HAND_BOX with 15 cm walls, built once and sunk into the table to the height each
+environment's level asks for (see place/mdp/wall_levels.py).
+
+Above about 8 cm the wrist has to go into the box as well as the fingers, and driving the
+TCP straight down by IK it does not fit: at 10 cm link7 came to rest on the rim at 6 of 12
+positions, at 12 cm at 7 with the TCP short of the floor at 4 (2026-10-25). Whether a
+policy that tilts the wrist gets further is what the levels measure."""
+
 BIN_COLOUR = (0.55, 0.45, 0.35)
 
 
@@ -97,8 +106,13 @@ def _boxes(cfg: BinCfg) -> list[tuple[str, tuple[float, float, float], tuple[flo
     ]
 
 
-def bin_usd_path(cfg: BinCfg) -> str:
+def bin_usd_path(cfg: BinCfg, part: str = "all") -> str:
     """Write the bin's USD if it is not there yet, and return its path.
+
+    ``part`` is ``"all"`` for the one-body bin, or ``"floor"`` / ``"walls"`` for the two
+    bodies of a bin whose wall height is set at reset (``reset_bin_walls``). Both share the
+    one-body bin's frame -- the floor plate's centre -- so the walls are placed by an offset
+    along z alone.
 
     Cached under the system temp directory with the dimensions in the name, so a change to
     any of them produces a new file rather than silently reusing the old one. Written to a
@@ -113,7 +127,8 @@ def bin_usd_path(cfg: BinCfg) -> str:
         for v in (cfg.inner_half, cfg.wall_thickness, cfg.wall_height, cfg.floor_half_thickness)
     )
     directory = os.path.join(tempfile.gettempdir(), "openarm")
-    path = os.path.join(directory, f"place_bin_{tag}.usda")
+    suffix = "" if part == "all" else f"_{part}"
+    path = os.path.join(directory, f"place_bin_{tag}{suffix}.usda")
     if os.path.exists(path):
         return path
 
@@ -133,6 +148,8 @@ def bin_usd_path(cfg: BinCfg) -> str:
     UsdPhysics.MassAPI.Apply(root.GetPrim()).CreateMassAttr(0.1)
 
     for name, centre, half in _boxes(cfg):
+        if (part == "floor" and name != "floor") or (part == "walls" and name == "floor"):
+            continue
         cube = UsdGeom.Cube.Define(stage, f"/Bin/{name}")
         cube.CreateSizeAttr(1.0)
         xform = UsdGeom.XformCommonAPI(cube)

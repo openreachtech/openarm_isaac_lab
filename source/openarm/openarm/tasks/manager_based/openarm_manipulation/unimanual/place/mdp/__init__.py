@@ -22,3 +22,4 @@ from .events import *  # noqa: F401, F403
 from .release import *  # noqa: F401, F403
 from .rewards import *  # noqa: F401, F403
 from .terminations import *  # noqa: F401, F403
+from .wall_levels import *  # noqa: F401, F403
