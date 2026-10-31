@@ -4,7 +4,7 @@
 
 - 移植元: `ManiSkill/mani_skill/envs/tasks/tabletop/place_sphere.py`（ManiSkill3 側も中身は同一）
 - 先行タスク: `Arm-Lift` — ロボット、基部高さ、腕アクション、連続グリッパ、RMA の観測構成、初期姿勢カリキュラムを継承する
-- タスク ID: **`Arm-Place-Sphere`**（teacher）/ **`Arm-Place-Sphere-Student`**（深度カメラ、§13）/ **`Arm-Place-Sphere-Deep`**（深いビン、§14）/ **`Arm-Place-Cube-Box`**（手を入れて置く箱、§15）/ **`Arm-Place-Cube-Box-Student`**（§15）/ **`Arm-Place-Cube-Box-Levels`**（壁の高さのカリキュラム、§16）
+- タスク ID: **`Arm-Place-Sphere`**（teacher）/ **`Arm-Place-Sphere-Student`**（深度カメラ、§13）/ **`Arm-Place-Sphere-Deep`**（深いビン、§14）/ **`Arm-Place-Cube-Box`**（手を入れて置く箱、§15）/ **`Arm-Place-Cube-Box-Student`**（§15）/ **`Arm-Place-Cube-Box-Levels`**（壁の高さのカリキュラム、§16）/ **`Arm-Place-Cube-Box-Levels-Student`**（§16）
 
 ---
 
@@ -480,6 +480,23 @@ Cube-Box の箱（内寸 20 cm）の壁を、Go2 の `terrain_levels` と同じ�
 - **手首を傾けて入れることを学習した。** IK で真下に向けたときは、10 cm 以上で手首（link7）が縁に乗った。今回は、15 cm でも成功したエピソードはすべて、手を箱に入れて、底から 1 cm 未満の高さで離している。
 - 失敗のほとんど（9 割以上）は、1 cm 以内を外したもの。落下、縁に乗る、握ったままといった失敗はほぼない。6 cm のときのような、ひっくり返す癖も出ていない。
 - 8 cm での 60% は、Cube-Box 単体（84.5%）より低い。1 つの方策で全レベルを学習していて、各レベルの練習量が少ないこと、行動ノイズが 4.3 と大きいまま学習を終えたことが理由と考えている。学習を延長すれば上がる可能性がある（未検証）。
+
+### Student（`Arm-Place-Cube-Box-Levels-Student`）
+
+構成は §13 と §15 の student と同じ。teacher は上の `model_1999.pt`。蒸留中も壁のカリキュラムは動いたままにしていて、student 自身が成功すると壁が高くなる。128 環境、2000 iteration。
+
+| 壁 | Teacher | Student |
+|---|---|---|
+| 8 cm | 60.3% | 62.8% |
+| 11 cm | 70.8% | 68.1% |
+| 13 cm | 64.7% | 67.0% |
+| 15 cm | 35.8% | 39.3% |
+
+（各 1200 エピソード。teacher の評価は観測ノイズあり、student はノイズなし）
+
+- どの高さでも、差は ±3 ポイント以内。壁が高くなって箱の中がカメラから見えなくなっても、student の成功率は落ちなかった。箱の中の位置は `state` で正確に分かり、立方体の向きは掴む前（壁の外）に見えるためと考えている。
+- 壁のレベルの平均は、200 iteration で teacher と同じ水準（約 6.2〜6.8）に達した。
+- 行動の模倣損失は 26.0 から 0.59、latent の損失は 0.76 から 0.067 まで下がった。
 
 ---
 

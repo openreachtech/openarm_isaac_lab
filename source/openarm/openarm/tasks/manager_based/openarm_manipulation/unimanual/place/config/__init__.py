@@ -116,3 +116,24 @@ gym.register(
     },
     disable_env_checker=True,
 )
+
+# And for the wall-level task; the wall curriculum keeps running during distillation:
+#   train.py --task Arm-Place-Cube-Box-Levels-Student --teacher_task Arm-Place-Cube-Box-Levels \
+#       --load_run <teacher run> --checkpoint <ckpt> --enable_cameras
+
+gym.register(
+    id="Arm-Place-Cube-Box-Levels-Student",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    kwargs={
+        "env_cfg_entry_point": (
+            f"{__name__}.arm_place_sphere_student_env_cfg:ArmPlaceCubeBoxLevelsStudentEnvCfg"
+        ),
+        "play_env_cfg_entry_point": (
+            f"{__name__}.arm_place_sphere_student_env_cfg:ArmPlaceCubeBoxLevelsStudentEnvCfg_PLAY"
+        ),
+        "rsl_rl_cfg_entry_point": (
+            f"{agents.__name__}.rsl_rl_rma_distillation_cfg:ArmLiftStudentDistillationRunnerCfg"
+        ),
+    },
+    disable_env_checker=True,
+)

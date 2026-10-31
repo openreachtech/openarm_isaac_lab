@@ -25,12 +25,19 @@ student exactly, inside ``state``, as the lift goal does there; on hardware the 
 have to be found in the depth image too.
 """
 
+import os
+
 from isaaclab.utils import configclass
 
 from ...lift.config.arm_lift_student_env_cfg import ArmLiftStudentObservationsCfg
 from ...lift.config.student_env_cfg import _depth_camera_cfg
 from ...lift.lift_env_cfg import ARM_INIT_NUM_LEVELS
-from .arm_place_sphere_env_cfg import ArmPlaceCubeBoxEnvCfg, ArmPlaceSphereEnvCfg
+from .arm_place_sphere_env_cfg import (
+    WALL_LEVELS,
+    ArmPlaceCubeBoxEnvCfg,
+    ArmPlaceCubeBoxLevelsEnvCfg,
+    ArmPlaceSphereEnvCfg,
+)
 
 
 @configclass
@@ -84,3 +91,41 @@ class ArmPlaceCubeBoxStudentEnvCfg_PLAY(ArmPlaceCubeBoxStudentEnvCfg):
         self.scene.num_envs = 50
         self.events.reset_robot_joints.params["fixed_level"] = ARM_INIT_NUM_LEVELS
         self.curriculum.arm_init_level = None
+
+
+@configclass
+class ArmPlaceCubeBoxLevelsStudentEnvCfg(ArmPlaceCubeBoxLevelsEnvCfg):
+    """The wall-level task through the depth camera, distilled from the
+    ``Arm-Place-Cube-Box-Levels`` teacher. The wall curriculum keeps running, driven by the
+    student's own successes.
+
+    Taller walls hide more from the camera, which sits at base height: by 15 cm the cube is
+    out of view from well before the hand reaches the floor. The student still has positions
+    exactly, in ``state``.
+
+    Distilled from the level teacher (2026-10-27, 2000 iterations), it matches it at every
+    height measured -- 62.8 / 68.1 / 67.0 / 39.3% at 8 / 11 / 13 / 15 cm against the
+    teacher's 60.3 / 70.8 / 64.7 / 35.8% -- so the walls hiding the cube costs it nothing.
+    """
+
+    observations: ArmLiftStudentObservationsCfg = ArmLiftStudentObservationsCfg()
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.depth_camera = _depth_camera_cfg()
+        self.scene.num_envs = 128
+
+
+@configclass
+class ArmPlaceCubeBoxLevelsStudentEnvCfg_PLAY(ArmPlaceCubeBoxLevelsStudentEnvCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.scene.num_envs = 50
+        self.events.reset_robot_joints.params["fixed_level"] = ARM_INIT_NUM_LEVELS
+        self.curriculum.arm_init_level = None
+        # As the teacher's PLAY: the tallest walls unless PLAY_WALL_LEVEL names another.
+        level = os.environ.get("PLAY_WALL_LEVEL")
+        self.events.reset_bin_walls.params["fixed_level"] = (
+            len(WALL_LEVELS) - 1 if level is None else int(level)
+        )
+        self.curriculum.wall_level = None
